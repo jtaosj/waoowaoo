@@ -58,7 +58,7 @@ jobs:
             
             # 尝试合并上游更新
             echo "Merging upstream/$branch..."
-            if git merge "upstream/$branch" --no-edit; then
+            if git merge "upstream/$branch" --no-edit --allow-unrelated-histories; then
               echo "Merge successful. Pushing to origin..."
               git push origin "$branch"
             else
