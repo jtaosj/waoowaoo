@@ -92,6 +92,7 @@ export async function assembleProjectProjectionLite(params: {
         videoRatio: true,
         artStyle: true,
         analysisModel: true,
+        videoModel: true,
       },
     }),
     episodeId
@@ -143,6 +144,7 @@ export async function assembleProjectProjectionLite(params: {
       videoRatio: project.videoRatio,
       artStyle: project.artStyle,
       analysisModel: project.analysisModel,
+      videoModel: project.videoModel,
       overrides: {},
     },
   })

@@ -116,6 +116,14 @@ export interface TaskBatchSubmittedPartData {
   mutationBatchId?: string | null
 }
 
+export interface PlanRunSubmittedPartData {
+  operationId: string
+  planRunId: string
+  status: string
+  executedStepKeys: string[]
+  waitingTaskId?: string | null
+}
+
 export interface ProjectAssistantContextSnapshot {
   projectId: string
   projectName: string
@@ -132,6 +140,7 @@ export interface ProjectAssistantContextSnapshot {
   latestArtifacts: ProjectContextSnapshot['latestArtifacts']
   config: {
     analysisModel?: string | null
+    videoModel?: string | null
     artStyle: string
     videoRatio: string
   }
@@ -156,5 +165,6 @@ export type WorkspaceAssistantPartType =
   | 'data-confirmation-request'
   | 'data-task-submitted'
   | 'data-task-batch-submitted'
+  | 'data-plan-run-submitted'
   | 'data-plan'
   | 'data-project-context'

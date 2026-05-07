@@ -45,6 +45,14 @@ function parseJsonResponse(responseText: string): Record<string, unknown> {
   return safeParseJsonObject(responseText)
 }
 
+function requireJsonResponseText(responseText: string, stepId: string): string {
+  const trimmed = responseText.trim()
+  if (!trimmed) {
+    throw new Error(`AI_EMPTY_RESPONSE: ${stepId} returned empty response`)
+  }
+  return trimmed
+}
+
 export async function handleAnalyzeNovelTask(job: Job<TaskJobData>) {
   const payload = (job.data.payload || {}) as Record<string, unknown>
   const projectId = job.data.projectId
@@ -196,9 +204,9 @@ export async function handleAnalyzeNovelTask(job: Job<TaskJobData>) {
     }
   })()
 
-  const characterResponseText = characterCompletion.text
-  const locationResponseText = locationCompletion.text
-  const propResponseText = propCompletion.text
+  const characterResponseText = requireJsonResponseText(characterCompletion.text, 'analyze_characters')
+  const locationResponseText = requireJsonResponseText(locationCompletion.text, 'analyze_locations')
+  const propResponseText = requireJsonResponseText(propCompletion.text, 'analyze_props')
 
   await reportTaskProgress(job, 60, {
     stage: 'analyze_novel_characters_done',

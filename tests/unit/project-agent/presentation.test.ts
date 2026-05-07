@@ -21,12 +21,14 @@ describe('project agent presentation', () => {
         videoRatio: '9:16',
         artStyle: 'realistic',
         analysisModel: 'google::gemini-3.1-flash-lite-preview',
+        videoModel: 'ark::doubao-seedance-1-0-pro-fast-251015',
         overrides: {},
       },
     } satisfies ProjectContextSnapshot)
 
     expect(snapshot.config).toEqual({
       analysisModel: 'google::gemini-3.1-flash-lite-preview',
+      videoModel: 'ark::doubao-seedance-1-0-pro-fast-251015',
       artStyle: 'realistic',
       videoRatio: '9:16',
     })

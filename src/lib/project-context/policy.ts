@@ -29,6 +29,10 @@ export function resolveProjectContextPolicy(params: {
       commandPolicy?.analysisModel !== undefined
         ? commandPolicy.analysisModel
         : (projectPolicy?.analysisModel ?? null),
+    videoModel:
+      commandPolicy?.videoModel !== undefined
+        ? commandPolicy.videoModel
+        : (projectPolicy?.videoModel ?? null),
     overrides: {
       ...(projectPolicy?.overrides || {}),
       ...(commandPolicy?.overrides || {}),

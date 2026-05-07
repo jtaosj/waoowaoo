@@ -151,7 +151,7 @@ function asPlanRunStatus(value: string): PlanRunStatus {
     || value === PLAN_RUN_STATUS.CANCELING
     || value === PLAN_RUN_STATUS.CANCELED
   ) return value
-  return PLAN_RUN_STATUS.FAILED
+  throw new Error(`PLAN_RUN_STATUS_INVALID:${value}`)
 }
 
 function mapPlanRun(row: PlanRunRow) {
@@ -373,6 +373,65 @@ export async function completePlanStep(params: {
         payload: {
           status: stepStatus,
           ...(params.taskId ? { taskId: params.taskId } : {}),
+        },
+      },
+    })
+    return mapPlanStep(step)
+  })
+}
+
+export async function completeWaitingPlanStepTask(params: {
+  planRunId: string
+  userId: string
+  projectId: string
+  stepKey: string
+  taskId: string
+  output?: Record<string, unknown> | null
+}) {
+  return await runtimeClient.$transaction(async (tx) => {
+    const existing = await tx.planStepRun.findUnique({
+      where: {
+        planRunId_stepKey: {
+          planRunId: params.planRunId,
+          stepKey: params.stepKey,
+        },
+      },
+    })
+    if (!existing) throw new Error('PLAN_STEP_NOT_FOUND')
+    if (existing.taskId !== params.taskId) throw new Error('PLAN_STEP_TASK_MISMATCH')
+    if (existing.status === PLAN_STEP_STATUS.COMPLETED) return mapPlanStep(existing)
+    if (existing.status !== PLAN_STEP_STATUS.WAITING_TASK) throw new Error('PLAN_STEP_NOT_WAITING_TASK')
+
+    const step = await tx.planStepRun.update({
+      where: {
+        planRunId_stepKey: {
+          planRunId: params.planRunId,
+          stepKey: params.stepKey,
+        },
+      },
+      data: {
+        status: PLAN_STEP_STATUS.COMPLETED,
+        outputJson: params.output || toRecord(existing.outputJson) || null,
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: new Date(),
+      },
+    })
+    const eventRun = await tx.planRun.update({
+      where: { id: params.planRunId },
+      data: { lastSeq: { increment: 1 } },
+    })
+    await tx.planRunEvent.create({
+      data: {
+        planRunId: params.planRunId,
+        projectId: params.projectId,
+        userId: params.userId,
+        seq: eventRun.lastSeq,
+        eventType: PLAN_RUN_EVENT_TYPE.STEP_COMPLETE,
+        stepKey: params.stepKey,
+        payload: {
+          status: PLAN_STEP_STATUS.COMPLETED,
+          taskId: params.taskId,
         },
       },
     })

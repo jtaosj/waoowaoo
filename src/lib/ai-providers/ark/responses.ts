@@ -33,6 +33,20 @@ function mergeStreamingText(existing: string, next: string): string {
   return existing + next
 }
 
+function assertArkResponseContent(text: string, reasoning: string, phase: 'completion' | 'stream') {
+  if (text.trim() || reasoning.trim()) return
+  throw new Error(`ARK_EMPTY_RESPONSE: Ark Responses ${phase} returned empty response`)
+}
+
+function readSseDataPayload(part: string): string {
+  return part
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim())
+    .join('\n')
+}
+
 function collectText(node: unknown, acc: string[]) {
   if (!node) return
   if (typeof node === 'string') {
@@ -50,6 +64,8 @@ function collectText(node: unknown, acc: string[]) {
 
   if (typeof obj.output_text === 'string') acc.push(obj.output_text)
   if (obj.response) collectText(obj.response, acc)
+  if (obj.item) collectText(obj.item, acc)
+  if (obj.items) collectText(obj.items, acc)
   if (obj.output) collectText(obj.output, acc)
   if (obj.outputs) collectText(obj.outputs, acc)
   if (obj.reasoning) collectText(obj.reasoning, acc)
@@ -82,6 +98,8 @@ function collectReasoning(node: unknown, acc: string[]) {
     if (typeof obj.delta === 'string') acc.push(obj.delta)
   }
   if (obj.response) collectReasoning(obj.response, acc)
+  if (obj.item) collectReasoning(obj.item, acc)
+  if (obj.items) collectReasoning(obj.items, acc)
   if (obj.reasoning) collectReasoning(obj.reasoning, acc)
   if (obj.reasoning_content) collectReasoning(obj.reasoning_content, acc)
   if (obj.thinking) collectReasoning(obj.thinking, acc)
@@ -92,7 +110,7 @@ function extractArkText(data: unknown): string {
   const obj = asRecord(data)
   if (!obj) return ''
   if (typeof obj.output_text === 'string') return obj.output_text
-  const output = obj.output ?? obj.outputs ?? []
+  const output = obj.output ?? obj.outputs ?? obj.item ?? obj.items ?? []
   const acc: string[] = []
   collectText(output, acc)
   return acc.filter(Boolean).join('')
@@ -101,7 +119,7 @@ function extractArkText(data: unknown): string {
 function extractArkReasoning(data: unknown): string {
   const obj = asRecord(data)
   if (!obj) return ''
-  const output = obj.output ?? obj.outputs ?? []
+  const output = obj.output ?? obj.outputs ?? obj.item ?? obj.items ?? []
   const acc: string[] = []
   collectReasoning(output, acc)
   return acc.filter(Boolean).join('')
@@ -135,9 +153,12 @@ export async function arkResponsesCompletion(options: ArkResponsesOptions): Prom
     throw new Error(`Ark Responses 调用失败: ${response.status} - ${errorText}`)
   }
   const data = await response.json()
+  const text = extractArkText(data)
+  const reasoning = extractArkReasoning(data)
+  assertArkResponseContent(text, reasoning, 'completion')
   return {
-    text: extractArkText(data),
-    reasoning: extractArkReasoning(data),
+    text,
+    reasoning,
     usage: extractArkUsage(data),
     raw: data,
   }
@@ -250,9 +271,7 @@ export function arkResponsesStream(options: ArkResponsesOptions & { temperature?
         const parts = buffer.split('\n\n')
         buffer = parts.pop() || ''
         for (const part of parts) {
-          const line = part.trim()
-          if (!line.startsWith('data:')) continue
-          const data = line.slice(5).trim()
+          const data = readSseDataPayload(part)
           if (!data || data === '[DONE]') continue
           const parsed = JSON.parse(data) as ArkResponseObject
           finalText = mergeStreamingText(finalText, extractArkText(parsed))
@@ -264,6 +283,20 @@ export function arkResponsesStream(options: ArkResponsesOptions & { temperature?
           if (deltaText) yield { kind: 'text', delta: deltaText }
         }
       }
+      if (buffer.trim()) {
+        const data = readSseDataPayload(buffer)
+        if (data && data !== '[DONE]') {
+          const parsed = JSON.parse(data) as ArkResponseObject
+          finalText = mergeStreamingText(finalText, extractArkText(parsed))
+          finalReasoning = mergeStreamingText(finalReasoning, extractArkReasoning(parsed))
+          finalUsage = extractArkUsage(parsed)
+          const deltaText = extractArkText(parsed)
+          const deltaReasoning = extractArkReasoning(parsed)
+          if (deltaReasoning) yield { kind: 'reasoning', delta: deltaReasoning }
+          if (deltaText) yield { kind: 'text', delta: deltaText }
+        }
+      }
+      assertArkResponseContent(finalText, finalReasoning, 'stream')
       resolveResult({
         text: finalText,
         reasoning: finalReasoning,

@@ -178,6 +178,7 @@ export async function assembleProjectContext(params: {
       videoRatio: project.videoRatio,
       artStyle: project.artStyle,
       analysisModel: project.analysisModel,
+      videoModel: project.videoModel,
       overrides: {},
     },
   })

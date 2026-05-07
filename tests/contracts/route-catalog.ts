@@ -146,6 +146,7 @@ const ROUTE_FILES = [
   'src/app/api/projects/route.ts',
   'src/app/api/plan-runs/[planRunId]/cancel/route.ts',
   'src/app/api/plan-runs/[planRunId]/events/route.ts',
+  'src/app/api/plan-runs/[planRunId]/resume/route.ts',
   'src/app/api/plan-runs/[planRunId]/route.ts',
   'src/app/api/plan-runs/[planRunId]/steps/[stepKey]/retry/route.ts',
   'src/app/api/plan-runs/route.ts',

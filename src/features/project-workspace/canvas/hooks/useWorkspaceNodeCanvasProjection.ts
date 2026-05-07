@@ -400,6 +400,16 @@ function hasVideo(panel: ProjectPanel): boolean {
   )
 }
 
+function canProjectVideo(panel: ProjectPanel): boolean {
+  return hasVideo(panel) || hasImage(panel)
+}
+
+function canQuickGenerateVideo(panel: ProjectPanel): boolean {
+  return !panel.videoTaskRunning
+    && typeof panel.videoModel === 'string'
+    && panel.videoModel.trim().length > 0
+}
+
 function panelDisplayNumber(panel: ProjectPanel): string {
   return String(panel.panelNumber ?? panel.panelIndex + 1).padStart(2, '0')
 }
@@ -592,10 +602,11 @@ export function buildWorkspaceNodeCanvasProjection({
       edges.push(createEdge(`edge:shot-image:${panel.id}`, source, nodeId))
     }
 
-    if (hasVideo(panel)) {
+    if (canProjectVideo(panel)) {
       const nodeId = `video:${panel.id}`
       const imageNodeId = `image:${panel.id}`
       const videoSource = hasImage(panel) ? imageNodeId : source
+      const quickGenerateVideo = canQuickGenerateVideo(panel)
       nodes.push(createNode({
         id: nodeId,
         fallbackX: STORY_COLUMN_X + COLUMN_GAP * 5,
@@ -617,15 +628,16 @@ export function buildWorkspaceNodeCanvasProjection({
           indexLabel: `V${panelDisplayNumber(panel)}`,
           previewImageUrl: panel.videoMedia?.url ?? panel.videoUrl ?? panel.media?.url ?? panel.imageUrl,
           videoDetails: createVideoDetails(panel),
-          actionLabel: panel.videoTaskRunning ? undefined : translate('actions.generateVideo'),
-          action: panel.videoTaskRunning
-            ? undefined
-            : {
+          actionLabel: quickGenerateVideo ? translate('actions.generateVideo') : undefined,
+          action: quickGenerateVideo
+            ? {
                 type: 'generate_video',
                 storyboardId: panel.storyboardId,
                 panelIndex: panel.panelIndex,
                 panelId: panel.id,
-              },
+                videoModel: panel.videoModel ?? undefined,
+              }
+            : undefined,
           onAction,
         },
       }))

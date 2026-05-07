@@ -311,6 +311,54 @@ describe('api specific - user api-config persistence', () => {
     expect(json.defaultModels?.characterModel).toBe('')
   })
 
+  it('does not inject a FAL lip sync default on GET when no lip sync model is enabled', async () => {
+    installAuthMocks()
+    mockAuthenticated('user-1')
+    prismaMock.userPreference.findUnique.mockResolvedValue({
+      customProviders: JSON.stringify([
+        { id: 'ark', name: 'Volcano Ark', apiKey: 'enc:ark-key' },
+      ]),
+      customModels: JSON.stringify([
+        {
+          type: 'llm',
+          provider: 'ark',
+          modelId: 'doubao-seed-2-0-lite-260215',
+          modelKey: 'ark::doubao-seed-2-0-lite-260215',
+          name: 'Doubao Seed 2.0 Lite',
+        },
+        {
+          type: 'image',
+          provider: 'ark',
+          modelId: 'doubao-seedream-4-5-251128',
+          modelKey: 'ark::doubao-seedream-4-5-251128',
+          name: 'Doubao Seedream 4.5',
+        },
+        {
+          type: 'video',
+          provider: 'ark',
+          modelId: 'doubao-seedance-2-0-fast-260128',
+          modelKey: 'ark::doubao-seedance-2-0-fast-260128',
+          name: 'Doubao Seedance 2.0 Fast',
+        },
+      ]),
+      lipSyncModel: null,
+    })
+    const route = await import('@/app/api/user/api-config/route')
+
+    const req = buildMockRequest({
+      path: '/api/user/api-config',
+      method: 'GET',
+    })
+
+    const res = await route.GET(req, routeContext)
+    expect(res.status).toBe(200)
+    const json = await res.json() as {
+      defaultModels?: { lipSyncModel?: string }
+    }
+    expect(json.defaultModels?.lipSyncModel).toBe('')
+    expect(json.defaultModels?.lipSyncModel).not.toBe('fal::fal-ai/kling-video/lipsync/audio-to-video')
+  })
+
   it('accepts workflow concurrency payload and returns normalized values on GET', async () => {
     installAuthMocks()
     mockAuthenticated('user-1')

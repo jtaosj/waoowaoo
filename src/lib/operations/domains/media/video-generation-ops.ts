@@ -143,15 +143,7 @@ async function resolveVideoCapabilityOptions(input: {
       runtimeSelections: selections,
     })
 
-  let resolvedOptions: Record<string, CapabilityValue>
-  try {
-    resolvedOptions = await resolveOptions(runtimeSelections)
-  } catch (error) {
-    if (!shouldApplyLastOptions) throw error
-    const fallbackSelections = { ...explicitRuntimeSelections }
-    fallbackSelections.generationMode = resolveVideoGenerationMode(payload)
-    resolvedOptions = await resolveOptions(fallbackSelections)
-  }
+  const resolvedOptions = await resolveOptions(runtimeSelections)
 
   const resolution = resolveBuiltinPricing({
       apiType: 'video',

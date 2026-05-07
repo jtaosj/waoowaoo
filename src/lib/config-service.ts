@@ -159,11 +159,11 @@ export async function getProjectModelConfig(
 
   return {
     analysisModel: extractModelKey(projectData?.analysisModel) || extractModelKey(userPref?.analysisModel) || null,
-    characterModel: extractModelKey(projectData?.characterModel) || null,
-    locationModel: extractModelKey(projectData?.locationModel) || null,
-    storyboardModel: extractModelKey(projectData?.storyboardModel) || null,
-    editModel: extractModelKey(projectData?.editModel) || null,
-    videoModel: extractModelKey(projectData?.videoModel) || null,
+    characterModel: extractModelKey(projectData?.characterModel) || extractModelKey(userPref?.characterModel) || null,
+    locationModel: extractModelKey(projectData?.locationModel) || extractModelKey(userPref?.locationModel) || null,
+    storyboardModel: extractModelKey(projectData?.storyboardModel) || extractModelKey(userPref?.storyboardModel) || null,
+    editModel: extractModelKey(projectData?.editModel) || extractModelKey(userPref?.editModel) || null,
+    videoModel: extractModelKey(projectData?.videoModel) || extractModelKey(userPref?.videoModel) || null,
     audioModel: extractModelKey(projectData?.audioModel) || extractModelKey(userPref?.audioModel) || null,
     musicModel: extractModelKey(projectData?.musicModel) || extractModelKey(userPref?.musicModel) || null,
     videoRatio: projectData?.videoRatio || '9:16',

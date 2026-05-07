@@ -164,6 +164,28 @@ describe('worker analyze-novel behavior', () => {
     await expect(handleAnalyzeNovelTask(buildJob())).rejects.toThrow('请先填写全局资产设定或剧本内容')
   })
 
+  it('provider empty response -> fails explicitly before marking the step done', async () => {
+    llmMock.getCompletionContent.mockReset()
+    llmMock.getCompletionContent
+      .mockReturnValueOnce('')
+      .mockReturnValueOnce(JSON.stringify({ locations: [] }))
+      .mockReturnValueOnce(JSON.stringify({ props: [] }))
+
+    await expect(handleAnalyzeNovelTask(buildJob())).rejects.toThrow(/analyze_characters.*empty response/i)
+
+    expect(workerMock.reportTaskProgress).not.toHaveBeenCalledWith(
+      expect.anything(),
+      60,
+      expect.objectContaining({
+        stepId: 'analyze_characters',
+        done: true,
+        output: '',
+      }),
+    )
+    expect(prismaMock.projectCharacter.create).not.toHaveBeenCalled()
+    expect(prismaMock.projectLocation.create).not.toHaveBeenCalled()
+  })
+
   it('success path -> creates character/location and persists cleaned location descriptions', async () => {
     const result = await handleAnalyzeNovelTask(buildJob())
 

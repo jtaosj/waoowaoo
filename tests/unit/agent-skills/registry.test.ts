@@ -31,11 +31,31 @@ describe('agent skill registry', () => {
     expect(Object.keys(results[0] ?? {})).not.toContain('allowedOperationIds')
   })
 
+  it('routes Chinese screenplay creation goals to the screenwriting skill first', () => {
+    const results = searchAgentSkills({
+      query: '我选择 2. 剧本创作。请基于左侧故事输入，先帮我创作一版短剧第一集的剧本内容，用于后续生成分镜。',
+      limit: 3,
+    })
+
+    expect(results[0]?.id).toBe('screenwriting')
+    expect(results[0]?.triggers).toEqual(expect.arrayContaining(['剧本创作', '短剧第一集']))
+  })
+
   it('loads full instructions and operation allowlist on demand', () => {
     const skill = loadAgentSkill('location-selection')
 
     expect(skill?.instructions).toContain('Never invent location ids')
     expect(skill?.allowedOperationIds).toContain('confirm_location_selection')
+  })
+
+  it('loads media generation instructions for direct single-panel video from context model config', () => {
+    const skill = loadAgentSkill('media-generation')
+
+    expect(skill?.instructions).toContain('invoke_operation')
+    expect(skill?.instructions).toContain('generate_panel_video')
+    expect(skill?.instructions).toContain('config.videoModel')
+    expect(skill?.instructions).toContain('panel with an existing imageUrl')
+    expect(skill?.instructions).toContain('explicitly provide a video model')
   })
 
   it('references real operations in every allowlist', () => {

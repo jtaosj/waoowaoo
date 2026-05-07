@@ -22,6 +22,7 @@ export function buildAssistantProjectContextSnapshot(
     latestArtifacts: context.latestArtifacts,
     config: {
       analysisModel: context.policy.analysisModel || null,
+      videoModel: context.policy.videoModel || null,
       artStyle: context.policy.artStyle,
       videoRatio: context.policy.videoRatio,
     },

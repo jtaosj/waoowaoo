@@ -57,6 +57,14 @@ export function resolveGlobalAnalyzeCompletion(
     }
   }
 
+  if (!taskState || taskState.phase === 'idle') {
+    return {
+      status: 'idle' as const,
+      finishedTaskId: null,
+      errorMessage: null,
+    }
+  }
+
   if (taskState?.phase === 'failed' || taskState?.lastError) {
     return {
       status: 'failed' as const,
@@ -65,9 +73,17 @@ export function resolveGlobalAnalyzeCompletion(
     }
   }
 
+  if (taskState.phase === 'completed') {
+    return {
+      status: 'succeeded' as const,
+      finishedTaskId: previousRunningTaskId,
+      errorMessage: null,
+    }
+  }
+
   return {
-    status: 'succeeded' as const,
-    finishedTaskId: previousRunningTaskId,
+    status: 'idle' as const,
+    finishedTaskId: null,
     errorMessage: null,
   }
 }
@@ -127,6 +143,15 @@ export function useAssetsGlobalActions({
 
       const submission = await analyzeGlobalAssets.mutateAsync()
       lastRunningTaskIdRef.current = submission.taskId
+      upsertTaskTargetOverlay(queryClient, {
+        projectId,
+        targetType: 'Project',
+        targetId: projectId,
+        phase: 'queued',
+        runningTaskId: submission.taskId,
+        runningTaskType: 'analyze_global',
+        intent: 'analyze',
+      })
     } catch (error: unknown) {
       clearTaskTargetOverlay(queryClient, {
         projectId,

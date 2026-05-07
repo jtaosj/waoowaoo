@@ -98,6 +98,26 @@ describe('assets global actions task state helpers', () => {
     })
   })
 
+  it('does not treat idle state as completed for a submitted task', () => {
+    expect(resolveGlobalAnalyzeCompletion('task-2', {
+      phase: 'idle',
+      runningTaskId: null,
+      lastError: null,
+    })).toEqual({
+      status: 'idle',
+      finishedTaskId: null,
+      errorMessage: null,
+    })
+  })
+
+  it('does not treat missing task state as completed for a submitted task', () => {
+    expect(resolveGlobalAnalyzeCompletion('task-2', null)).toEqual({
+      status: 'idle',
+      finishedTaskId: null,
+      errorMessage: null,
+    })
+  })
+
   it('surfaces failed completion message from task state', () => {
     expect(resolveGlobalAnalyzeCompletion('task-3', {
       phase: 'failed',

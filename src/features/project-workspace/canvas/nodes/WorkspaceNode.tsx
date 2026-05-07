@@ -157,14 +157,14 @@ function StoryContent({
 }
 
 function AnalysisContent({ data }: { readonly data: WorkspaceCanvasFlowNode['data'] }) {
-  return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
+  return <p className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
 }
 
 function ScriptClipContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode['data']; readonly labels: ReturnType<typeof useTranslations> }) {
   const details = data.scriptDetails
   if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
   return (
-    <div className="nodrag nowheel max-h-[238px] space-y-2 overflow-y-auto pr-1">
+    <div className="space-y-2">
       {renderAssetChips(labels('characters'), details.characters)}
       {renderChips(labels('locations'), details.locations)}
       {renderChips(labels('props'), details.props)}
@@ -188,7 +188,7 @@ function ShotContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode[
   if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
   const promptShot = details.promptShot
   return (
-    <div className="nodrag nowheel max-h-[258px] space-y-2 overflow-y-auto pr-1">
+    <div className="space-y-2">
       {renderSection(labels('shotCore'), (
         <div className="space-y-1">
           {renderValue(labels('shotType'), details.shotType)}
@@ -248,7 +248,7 @@ function MediaPreview({ data }: { readonly data: WorkspaceCanvasFlowNode['data']
 function ImageContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode['data']; readonly labels: ReturnType<typeof useTranslations> }) {
   const details = data.imageDetails
   return (
-    <div className="nodrag nowheel max-h-[270px] space-y-2 overflow-y-auto pr-1">
+    <div className="space-y-2">
       <MediaPreview data={data} />
       {details ? (
         <>
@@ -277,7 +277,7 @@ function ImageContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode
 function VideoContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode['data']; readonly labels: ReturnType<typeof useTranslations> }) {
   const details = data.videoDetails
   return (
-    <div className="nodrag nowheel max-h-[290px] space-y-2 overflow-y-auto pr-1">
+    <div className="space-y-2">
       <MediaPreview data={data} />
       {details ? (
         <>
@@ -305,7 +305,7 @@ function FinalContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode
   const details = data.finalDetails
   if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
   return (
-    <div className="nodrag nowheel max-h-[158px] space-y-2 overflow-y-auto pr-1">
+    <div className="space-y-2">
       {renderSection(labels('finalStats'), (
         <div className="space-y-1">
           {renderValue(labels('totalShots'), details.totalShots)}
@@ -365,8 +365,8 @@ export default function WorkspaceNode({ data }: NodeProps<WorkspaceCanvasFlowNod
       {hasTarget ? <Handle type="target" position={Position.Left} className="!z-10 !h-3.5 !w-3.5 !border-2 !border-white !bg-slate-500 !shadow-sm" /> : null}
       {hasSource ? <Handle type="source" position={Position.Right} className="!z-10 !h-3.5 !w-3.5 !border-2 !border-white !bg-slate-500 !shadow-sm" /> : null}
 
-      <article className="h-full overflow-hidden rounded-[24px] border border-slate-200 bg-white/92 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-        <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+      <article className="flex min-h-0 h-full flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white/92 shadow-[0_18px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--glass-text-tertiary)]">
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-[11px] bg-slate-100 text-[var(--glass-text-secondary)]">
@@ -388,10 +388,12 @@ export default function WorkspaceNode({ data }: NodeProps<WorkspaceCanvasFlowNod
           </span>
         </header>
 
-        <div className="space-y-4 px-5 py-5">
-          <NodeContent data={data} draft={storyDraft} setDraft={setStoryDraft} labels={labels} />
+        <div className="flex min-h-0 flex-1 overflow-hidden flex-col px-5 py-5">
+          <div className="nodrag nowheel min-h-0 flex-1 overflow-y-auto pr-1">
+            <NodeContent data={data} draft={storyDraft} setDraft={setStoryDraft} labels={labels} />
+          </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <div className="mt-4 flex shrink-0 items-center justify-between gap-3 border-t border-slate-100 pt-4">
             <p className="min-w-0 truncate text-xs text-[var(--glass-text-tertiary)]">{data.meta}</p>
             <div className="flex shrink-0 items-center gap-1.5">
               {detailNodeId && data.kind !== 'analysis' ? (

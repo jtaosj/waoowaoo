@@ -6,6 +6,7 @@ export interface ProjectPolicySnapshot {
   videoRatio: string
   artStyle: string
   analysisModel?: string | null
+  videoModel?: string | null
   overrides: Record<string, unknown>
 }
 
@@ -13,6 +14,7 @@ export interface ProjectPolicyOverrideInput {
   videoRatio?: string
   artStyle?: string
   analysisModel?: string | null
+  videoModel?: string | null
   overrides?: Record<string, unknown>
 }
 

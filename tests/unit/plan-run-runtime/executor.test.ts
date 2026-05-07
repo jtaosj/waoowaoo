@@ -130,6 +130,45 @@ describe('plan run executor', () => {
     expect(serviceMock.completePlanRun).not.toHaveBeenCalled()
   })
 
+  it('passes the active episode context into steps that omit episodeId', async () => {
+    const invokeStep = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        clipCount: 1,
+      },
+    }))
+
+    const result = await executeAgentPlan({
+      userId: 'user-1',
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      input: {
+        goal: 'split story into clips',
+        steps: [
+          {
+            stepKey: 'split',
+            skillId: 'story-structure',
+            operationId: 'split_clips',
+          },
+        ],
+      },
+      invokeStep,
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      status: 'completed',
+      executedStepKeys: ['split'],
+    })
+    expect(invokeStep).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'split_clips',
+      input: {
+        episodeId: 'episode-1',
+        confirmed: true,
+      },
+    }))
+  })
+
   it('fails the current step when an operation returns an error', async () => {
     const invokeStep = vi.fn(async () => ({
       ok: false as const,

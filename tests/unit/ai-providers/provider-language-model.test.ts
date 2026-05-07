@@ -86,4 +86,53 @@ describe('ai provider language model registry', () => {
       name: 'anthropic',
     })
   })
+
+  it('creates Ark language models with the Ark OpenAI-compatible endpoint by default', () => {
+    const model = createRegisteredLanguageModel({
+      providerKey: 'ark',
+      selection: {
+        provider: 'ark',
+        modelId: 'doubao-seed-1-8-251228',
+        modelKey: 'ark::doubao-seed-1-8-251228',
+      },
+      providerConfig: {
+        id: 'ark',
+        name: '火山引擎 Ark',
+        apiKey: 'ark-api-key',
+      },
+    })
+
+    expect(model).toMatchObject({
+      provider: 'openai',
+      modelId: 'doubao-seed-1-8-251228',
+    })
+    expect(openAiState.createOpenAI).toHaveBeenCalledWith({
+      apiKey: 'ark-api-key',
+      baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+      name: 'ark',
+    })
+  })
+
+  it('keeps an explicit Ark language model endpoint when one is configured', () => {
+    createRegisteredLanguageModel({
+      providerKey: 'ark',
+      selection: {
+        provider: 'ark',
+        modelId: 'doubao-seed-1-8-251228',
+        modelKey: 'ark::doubao-seed-1-8-251228',
+      },
+      providerConfig: {
+        id: 'ark',
+        name: '火山引擎 Ark',
+        apiKey: 'ark-api-key',
+        baseUrl: 'https://ark.example/api/v3',
+      },
+    })
+
+    expect(openAiState.createOpenAI).toHaveBeenCalledWith({
+      apiKey: 'ark-api-key',
+      baseURL: 'https://ark.example/api/v3',
+      name: 'ark',
+    })
+  })
 })

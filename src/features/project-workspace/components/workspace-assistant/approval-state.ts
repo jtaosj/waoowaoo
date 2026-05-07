@@ -7,6 +7,7 @@ import type {
 
 export interface PendingConfirmationAction {
   messageId: string
+  actionKey: string
   operationId: string
   data: ConfirmationRequestPartData
 }
@@ -30,6 +31,7 @@ export function collectPendingConfirmationActions(messages: UIMessage[]): Pendin
       if (!isConfirmationRequestPart(part)) continue
       actions.push({
         messageId: message.id,
+        actionKey: buildConfirmationActionKey(message.id, part.data.operationId),
         operationId: part.data.operationId,
         data: part.data,
       })
@@ -39,10 +41,24 @@ export function collectPendingConfirmationActions(messages: UIMessage[]): Pendin
   return actions
 }
 
-export function removeConfirmationRequestFromMessages(messages: UIMessage[], operationId: string): UIMessage[] {
+export function buildConfirmationActionKey(messageId: string, operationId: string): string {
+  return `confirm:${encodeURIComponent(messageId)}:${encodeURIComponent(operationId)}`
+}
+
+export function removeConfirmationRequestFromMessages(
+  messages: UIMessage[],
+  target: string | {
+    operationId: string
+    messageId?: string | null
+  },
+): UIMessage[] {
+  const operationId = typeof target === 'string' ? target : target.operationId
+  const messageId = typeof target === 'string' ? null : target.messageId ?? null
   return messages.flatMap((message) => {
     const nextParts = message.parts.filter((part) => (
-      !isConfirmationRequestPart(part) || part.data.operationId !== operationId
+      !isConfirmationRequestPart(part)
+      || part.data.operationId !== operationId
+      || (messageId !== null && message.id !== messageId)
     ))
     if (nextParts.length === 0) return []
     return [{ ...message, parts: nextParts }]

@@ -110,6 +110,28 @@ describe('workspace node rendering', () => {
     expect(html).toContain('hello')
   })
 
+  it('keeps compact node content readable inside a scrollable body region', () => {
+    const html = renderNode({
+      kind: 'analysis',
+      layoutNodeType: 'analysis',
+      targetType: 'episode',
+      targetId: 'episode-1',
+      title: 'Analysis node',
+      eyebrow: 'Analysis',
+      body: 'Detailed structure summary that should remain readable even when the card is compact.',
+      meta: 'analysis',
+      statusLabel: 'Ready',
+      width: 320,
+      height: 214,
+      nodeId: 'analysis:episode-1',
+    })
+
+    expect(html).toContain('flex min-h-0 h-full flex-col')
+    expect(html).toContain('min-h-0 flex-1 overflow-hidden')
+    expect(html).toContain('nodrag nowheel min-h-0 flex-1 overflow-y-auto')
+    expect(html).toContain('Detailed structure summary')
+  })
+
   it('renders shot, image, video, and final details without stage containers', () => {
     const shotHtml = renderNode({
       kind: 'shot',

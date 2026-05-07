@@ -33,6 +33,14 @@ import {
   isWorkspaceAssistantSendMessageEvent,
   WORKSPACE_ASSISTANT_SEND_MESSAGE_EVENT,
 } from './workspace-assistant/assistant-send-event'
+import {
+  readOperationResultSummary,
+  readPlanRunSubmittedPartData,
+} from './workspace-assistant/confirmed-operation-result'
+import {
+  getConfirmationSubmissionBlocker,
+  getConfirmationSubmissionBlockerMessageKey,
+} from './workspace-assistant/confirmation-requirements'
 import type { WorkspaceAssistantSelectionContext } from '../canvas/ProjectWorkspaceCanvas'
 
 interface WorkspaceAssistantPanelProps {
@@ -59,16 +67,6 @@ function readResponseErrorMessage(payload: unknown, fallback: string): string {
   const details = isRecord(error?.details) ? error.details : null
   if (typeof details?.message === 'string' && details.message.trim()) return details.message.trim()
   return fallback
-}
-
-function readOperationResultSummary(payload: unknown): string {
-  if (!isRecord(payload)) return ''
-  const result = isRecord(payload.result) ? payload.result : null
-  if (!result) return ''
-  const taskId = typeof result.taskId === 'string' ? result.taskId.trim() : ''
-  const runId = typeof result.runId === 'string' ? result.runId.trim() : ''
-  const status = typeof result.status === 'string' ? result.status.trim() : ''
-  return [status, taskId || runId].filter(Boolean).join(' · ')
 }
 
 function readStoredAssistantPanelWidth(): number {
@@ -151,7 +149,7 @@ export default function WorkspaceAssistantPanel({
   const [selectedPendingActionKey, setSelectedPendingActionKey] = useState<string | null>(null)
   const pendingActionItems = [
     ...pendingConfirmationActions.map((item) => ({
-      key: `confirm:${item.operationId}`,
+      key: item.actionKey,
       label: item.operationId,
       kind: 'confirmation' as const,
       summary: item.data.summary,
@@ -159,11 +157,27 @@ export default function WorkspaceAssistantPanel({
   ]
   const effectiveSelectedPendingActionKey = selectedPendingActionKey || pendingActionItems[pendingActionItems.length - 1]?.key || null
   const activePendingConfirmation = effectiveSelectedPendingActionKey?.startsWith('confirm:')
-    ? pendingConfirmationActions.find((item) => `confirm:${item.operationId}` === effectiveSelectedPendingActionKey) || null
+    ? pendingConfirmationActions.find((item) => item.actionKey === effectiveSelectedPendingActionKey) || null
     : null
   const [confirmationSubmittingKey, setConfirmationSubmittingKey] = useState<string | null>(null)
-  const handleConfirmOperation = async (operationId: string, argsHint?: Record<string, unknown> | null) => {
-    setConfirmationSubmittingKey(`confirm:${operationId}:continue`)
+  const handleConfirmOperation = async (
+    operationId: string,
+    argsHint?: Record<string, unknown> | null,
+    messageId?: string | null,
+  ) => {
+    const blocker = getConfirmationSubmissionBlocker(operationId, argsHint ?? null)
+    if (blocker) {
+      assistantRuntime.replaceMessages([
+        ...assistantRuntime.messages,
+        createAssistantMessage([{
+          type: 'text',
+          text: t(getConfirmationSubmissionBlockerMessageKey(blocker)),
+        }]),
+      ])
+      return
+    }
+    const submittingKey = messageId ? `confirm:${messageId}:${operationId}:continue` : `confirm:${operationId}:continue`
+    setConfirmationSubmittingKey(submittingKey)
     try {
       const response = await apiFetch(`/api/projects/${projectId}/assistant/confirm-operation`, {
         method: 'POST',
@@ -189,19 +203,34 @@ export default function WorkspaceAssistantPanel({
         throw new Error(readResponseErrorMessage(payload, t('cards.operationExecutionFailedFallback')))
       }
 
-      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, operationId)
+      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, {
+        operationId,
+        messageId,
+      })
       const resultSummary = readOperationResultSummary(payload)
+      const planRunData = readPlanRunSubmittedPartData(operationId, payload)
       assistantRuntime.replaceMessages([
         ...nextMessages,
-        createAssistantMessage([{
-          type: 'text',
-          text: resultSummary
-            ? t('cards.confirmedOperationWithResult', { operation: operationId, result: resultSummary })
-            : t('cards.confirmedOperation', { operation: operationId }),
-        }]),
+        createAssistantMessage([
+          {
+            type: 'text',
+            text: resultSummary
+              ? t('cards.confirmedOperationWithResult', { operation: operationId, result: resultSummary })
+              : t('cards.confirmedOperation', { operation: operationId }),
+          },
+          ...(planRunData
+            ? [{
+                type: 'data-plan-run-submitted' as const,
+                data: planRunData,
+              }]
+            : []),
+        ]),
       ])
     } catch (error) {
-      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, operationId)
+      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, {
+        operationId,
+        messageId,
+      })
       assistantRuntime.replaceMessages([
         ...nextMessages,
         createAssistantMessage([{
@@ -216,10 +245,14 @@ export default function WorkspaceAssistantPanel({
       setConfirmationSubmittingKey(null)
     }
   }
-  const handleCancelOperation = async (operationId: string) => {
-    setConfirmationSubmittingKey(`confirm:${operationId}:cancel`)
+  const handleCancelOperation = async (operationId: string, messageId?: string | null) => {
+    const submittingKey = messageId ? `confirm:${messageId}:${operationId}:cancel` : `confirm:${operationId}:cancel`
+    setConfirmationSubmittingKey(submittingKey)
     try {
-      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, operationId)
+      const nextMessages = removeConfirmationRequestFromMessages(assistantRuntime.messages, {
+        operationId,
+        messageId,
+      })
       assistantRuntime.replaceMessages([
         ...nextMessages,
         createAssistantMessage([{
@@ -398,15 +431,31 @@ export default function WorkspaceAssistantPanel({
                       ))}
                     </div>
                     {activePendingConfirmation ? (
-                      <ConfirmationActionCard
-                        operationId={activePendingConfirmation.operationId}
-                        summary={activePendingConfirmation.data.summary}
-                        argsHint={activePendingConfirmation.data.argsHint ?? null}
-                        onConfirm={async () => handleConfirmOperation(activePendingConfirmation.operationId, activePendingConfirmation.data.argsHint ?? null)}
-                        onCancel={async () => handleCancelOperation(activePendingConfirmation.operationId)}
-                        confirmPending={confirmationSubmittingKey === `confirm:${activePendingConfirmation.operationId}:continue`}
-                        cancelPending={confirmationSubmittingKey === `confirm:${activePendingConfirmation.operationId}:cancel`}
-                      />
+                      (() => {
+                        const blocker = getConfirmationSubmissionBlocker(
+                          activePendingConfirmation.operationId,
+                          activePendingConfirmation.data.argsHint ?? null,
+                        )
+                        return (
+                          <ConfirmationActionCard
+                            operationId={activePendingConfirmation.operationId}
+                            summary={activePendingConfirmation.data.summary}
+                            argsHint={activePendingConfirmation.data.argsHint ?? null}
+                            blockReason={blocker ? t(getConfirmationSubmissionBlockerMessageKey(blocker)) : null}
+                            onConfirm={async () => handleConfirmOperation(
+                              activePendingConfirmation.operationId,
+                              activePendingConfirmation.data.argsHint ?? null,
+                              activePendingConfirmation.messageId,
+                            )}
+                            onCancel={async () => handleCancelOperation(
+                              activePendingConfirmation.operationId,
+                              activePendingConfirmation.messageId,
+                            )}
+                            confirmPending={confirmationSubmittingKey === `confirm:${activePendingConfirmation.messageId}:${activePendingConfirmation.operationId}:continue`}
+                            cancelPending={confirmationSubmittingKey === `confirm:${activePendingConfirmation.messageId}:${activePendingConfirmation.operationId}:cancel`}
+                          />
+                        )
+                      })()
                     ) : null}
                   </div>
                 ) : null}

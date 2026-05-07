@@ -22,6 +22,11 @@ import type {
 } from '@/lib/project-agent/types'
 import { useRevertMutationBatch } from '@/lib/query/hooks'
 import { MarkdownTextPart } from './MarkdownTextPart'
+import { PlanRunSubmittedDataCard } from './PlanRunSubmittedDataCard'
+import {
+  getConfirmationSubmissionBlocker,
+  getConfirmationSubmissionBlockerMessageKey,
+} from './confirmation-requirements'
 
 const AGENT_SKILL_LABEL_KEYS: Record<string, string> = {
   'creative-direction': 'creativeDirection',
@@ -138,6 +143,7 @@ export function ConfirmationActionCard(props: {
   operationId: string
   summary: string
   argsHint?: Record<string, unknown> | null
+  blockReason?: string | null
   onConfirm: () => Promise<void>
   onCancel: () => Promise<void>
   confirmPending: boolean
@@ -156,12 +162,17 @@ export function ConfirmationActionCard(props: {
           {JSON.stringify(props.argsHint, null, 2)}
         </pre>
       ) : null}
+      {props.blockReason ? (
+        <div className="mt-2 rounded-xl border border-[var(--glass-tone-warn-fg)]/30 bg-[var(--glass-tone-warn-bg)] px-3 py-2 text-[11px] text-[var(--glass-tone-warn-fg)]">
+          {props.blockReason}
+        </div>
+      ) : null}
       <div className="mt-3 flex gap-2">
         <button
           type="button"
           className="flex-1 rounded-xl bg-[var(--glass-accent-from)] px-3 py-2 text-sm font-medium text-white"
           onClick={() => { void props.onConfirm() }}
-          disabled={props.confirmPending}
+          disabled={props.confirmPending || !!props.blockReason}
         >
           {props.confirmPending ? t('cards.confirmRunning') : t('cards.confirmContinue')}
         </button>
@@ -183,11 +194,14 @@ function InlineConfirmationRequestDataCard(props: DataMessagePartProps<Confirmat
   onCancelOperation: (operationId: string) => Promise<void>
   confirmationSubmittingKey: string | null
 }) {
+  const t = useTranslations('assistantAgent')
+  const blocker = getConfirmationSubmissionBlocker(props.data.operationId, props.data.argsHint ?? null)
   return (
     <ConfirmationActionCard
       operationId={props.data.operationId}
       summary={props.data.summary}
       argsHint={props.data.argsHint ?? null}
+      blockReason={blocker ? t(getConfirmationSubmissionBlockerMessageKey(blocker)) : null}
       onConfirm={async () => props.onConfirmOperation(props.data.operationId, props.data.argsHint ?? null)}
       onCancel={async () => props.onCancelOperation(props.data.operationId)}
       confirmPending={props.confirmationSubmittingKey === `confirm:${props.data.operationId}:continue`}
@@ -415,6 +429,7 @@ export function useWorkspaceAssistantMessagePartComponents({
         ),
         'task-submitted': TaskSubmittedDataCard,
         'task-batch-submitted': TaskBatchSubmittedDataCard,
+        'plan-run-submitted': PlanRunSubmittedDataCard,
         plan: AgentPlanDataCard,
         'project-context': ProjectContextDataCard,
       },

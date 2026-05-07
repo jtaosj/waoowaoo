@@ -165,6 +165,7 @@ describe('workspace node canvas projection', () => {
       'shot:panel-1',
       'shot:panel-2',
       'image:panel-1',
+      'video:panel-1',
       'video:panel-2',
       'final:episode-1',
     ])
@@ -174,8 +175,41 @@ describe('workspace node canvas projection', () => {
 
     const shotNode = projection.nodes.find((node) => node.id === 'shot:panel-1')
     const imageNode = projection.nodes.find((node) => node.id === 'image:panel-1')
+    const videoNode = projection.nodes.find((node) => node.id === 'video:panel-1')
     expect(shotNode?.data.action).toEqual({ type: 'generate_image', panelId: 'panel-1' })
     expect(imageNode?.data.action).toEqual({ type: 'generate_image', panelId: 'panel-1' })
+    expect(videoNode?.data.action).toBeUndefined()
+  })
+
+  it('creates a video node for an image-ready panel without submitting a model-less quick action', () => {
+    const projection = buildWorkspaceNodeCanvasProjection({
+      episodeId: 'episode-1',
+      storyText: 'A real story',
+      clips: [createClip('clip-1', 'first clip content')],
+      storyboards: [
+        createStoryboard({
+          id: 'storyboard-1',
+          clipId: 'clip-1',
+          panels: [
+            createPanel({
+              id: 'panel-1',
+              panelIndex: 0,
+              description: 'first panel',
+              imageUrl: 'https://example.com/panel-1.png',
+            }),
+          ],
+        }),
+      ],
+      savedLayouts: [],
+      translate: t,
+    })
+
+    const videoNode = projection.nodes.find((node) => node.id === 'video:panel-1')
+
+    expect(videoNode?.data.kind).toBe('videoClip')
+    expect(videoNode?.data.previewImageUrl).toBe('https://example.com/panel-1.png')
+    expect(videoNode?.data.action).toBeUndefined()
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('image:panel-1->video:panel-1')
   })
 
   it('uses saved layout only for node position and preserves business ordering', () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPlanRun } from '@/lib/plan-run-runtime/service'
+import { completeWaitingPlanStepTask, createPlanRun, getPlanRunSnapshot } from '@/lib/plan-run-runtime/service'
 
 const prismaState = vi.hoisted(() => {
   const tx = {
@@ -69,6 +69,50 @@ function buildPlanRunRow(planId: string | null) {
   }
 }
 
+function buildPlanStepRunRow(status: string) {
+  const now = new Date('2026-05-05T00:00:00.000Z')
+  return {
+    id: 'step-run-1',
+    planRunId: 'plan-run-1',
+    stepKey: 'split',
+    skillId: 'screenwriting',
+    operationId: 'split_clips',
+    taskId: 'task-1',
+    status,
+    stepIndex: 1,
+    stepTotal: 2,
+    dependsOnJson: [],
+    inputArtifactsJson: [],
+    outputArtifactsJson: ['clips'],
+    inputJson: { episodeId: 'episode-1' },
+    outputJson: status === 'completed' ? { clipCount: 3 } : { taskId: 'task-1' },
+    errorCode: null,
+    errorMessage: null,
+    startedAt: now,
+    finishedAt: status === 'completed' ? now : null,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function buildPlanRunEventRow() {
+  const now = new Date('2026-05-05T00:00:00.000Z')
+  return {
+    id: { toString: () => '1' },
+    planRunId: 'plan-run-1',
+    projectId: 'project-1',
+    userId: 'user-1',
+    seq: 7,
+    eventType: 'step.complete',
+    stepKey: 'split',
+    payload: {
+      status: 'completed',
+      taskId: 'task-1',
+    },
+    createdAt: now,
+  }
+}
+
 describe('plan run runtime service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -120,5 +164,68 @@ describe('plan run runtime service', () => {
       select: { id: true },
     })
     expect(prismaState.tx.planRun.create).not.toHaveBeenCalled()
+  })
+
+  it('marks a waiting async task step completed with the final task output', async () => {
+    prismaState.tx.planStepRun.findUnique.mockResolvedValue(buildPlanStepRunRow('waiting_task'))
+    prismaState.tx.planStepRun.update.mockResolvedValue(buildPlanStepRunRow('completed'))
+    prismaState.tx.planRun.update.mockResolvedValue({
+      ...buildPlanRunRow(null),
+      lastSeq: 7,
+    })
+    prismaState.tx.planRunEvent.create.mockResolvedValue(buildPlanRunEventRow())
+
+    const step = await completeWaitingPlanStepTask({
+      planRunId: 'plan-run-1',
+      userId: 'user-1',
+      projectId: 'project-1',
+      stepKey: 'split',
+      taskId: 'task-1',
+      output: { clipCount: 3 },
+    })
+
+    expect(step.status).toBe('completed')
+    expect(step.output).toEqual({ clipCount: 3 })
+    expect(prismaState.tx.planStepRun.findUnique).toHaveBeenCalledWith({
+      where: {
+        planRunId_stepKey: {
+          planRunId: 'plan-run-1',
+          stepKey: 'split',
+        },
+      },
+    })
+    expect(prismaState.tx.planStepRun.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'completed',
+        outputJson: { clipCount: 3 },
+        errorCode: null,
+        errorMessage: null,
+      }),
+    }))
+    expect(prismaState.tx.planRunEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        planRunId: 'plan-run-1',
+        projectId: 'project-1',
+        userId: 'user-1',
+        seq: 7,
+        eventType: 'step.complete',
+        stepKey: 'split',
+        payload: {
+          status: 'completed',
+          taskId: 'task-1',
+        },
+      }),
+    })
+  })
+
+  it('fails explicitly when a persisted PlanRun status is unknown', async () => {
+    prismaState.tx.planRun.findUnique.mockResolvedValue({
+      ...buildPlanRunRow(null),
+      status: 'mystery',
+    })
+    prismaState.tx.planStepRun.findMany.mockResolvedValue([])
+    prismaState.tx.planArtifact.findMany.mockResolvedValue([])
+
+    await expect(getPlanRunSnapshot('plan-run-1')).rejects.toThrow('PLAN_RUN_STATUS_INVALID:mystery')
   })
 })

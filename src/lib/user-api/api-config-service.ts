@@ -9,7 +9,7 @@ import { prisma } from '@/lib/prisma'
 import { encryptApiKey, decryptApiKey } from '@/lib/crypto-utils'
 import { ApiError } from '@/lib/api-errors'
 import { composeModelKey } from '@/lib/ai-registry/selection'
-import { buildApiConfigServerCatalog, DEFAULT_LIPSYNC_MODEL_KEY, getGoogleCompatibleApiConfigPresetModels } from '@/lib/ai-registry/api-config-catalog'
+import { buildApiConfigServerCatalog, getGoogleCompatibleApiConfigPresetModels } from '@/lib/ai-registry/api-config-catalog'
 import { ensureAiCatalogsRegistered } from '@/lib/ai-exec/catalog-bootstrap'
 import { getBillingMode } from '@/lib/billing/mode'
 import { normalizeWorkflowConcurrencyConfig } from '@/lib/workflow-concurrency'
@@ -115,7 +115,7 @@ export async function getUserApiConfig(userId: string) {
     videoModel: pref?.videoModel || '',
     audioModel: pref?.audioModel || '',
     musicModel: pref?.musicModel || '',
-    lipSyncModel: pref?.lipSyncModel || DEFAULT_LIPSYNC_MODEL_KEY,
+    lipSyncModel: pref?.lipSyncModel || '',
     voiceDesignModel: pref?.voiceDesignModel || '',
   }
   const defaultModels = billingMode === 'OFF'
