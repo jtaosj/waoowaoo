@@ -1,5 +1,9 @@
 import type { UIMessage } from 'ai'
 import type { AgentRuntimeContextPartData } from '@/lib/project-agent/types'
+import {
+  mergeProjectAssistantMessageVersions,
+  sanitizeProjectAssistantMessage,
+} from '@/lib/project-agent/ui-message-sanitize'
 
 type UnknownObject = { [key: string]: unknown }
 
@@ -31,14 +35,19 @@ export function mergeWorkspaceAssistantRawMessages(params: {
 }): UIMessage[] {
   const merged = new Map<string, UIMessage>()
   for (const message of params.current) {
-    merged.set(message.id, message)
+    const sanitizedMessage = sanitizeProjectAssistantMessage(message)
+    if (sanitizedMessage) merged.set(sanitizedMessage.id, sanitizedMessage)
   }
 
   for (const message of params.incoming) {
     if (isWorkspaceAssistantSummaryMessage(message) && merged.size > 0 && !merged.has(message.id)) {
       continue
     }
-    merged.set(message.id, message)
+    const current = merged.get(message.id)
+    const sanitizedMessage = current
+      ? mergeProjectAssistantMessageVersions(current, message)
+      : sanitizeProjectAssistantMessage(message)
+    if (sanitizedMessage) merged.set(sanitizedMessage.id, sanitizedMessage)
   }
 
   return Array.from(merged.values())

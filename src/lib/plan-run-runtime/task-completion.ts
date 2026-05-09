@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server'
 import { createScopedLogger } from '@/lib/logging/core'
-import { listWaitingPlanStepsByTaskId } from './service'
+import {
+  failPlanStep,
+  listWaitingPlanStepsByTaskId,
+} from './service'
 import { resumePlanRunFromApi } from './resume'
 
 const logger = createScopedLogger({
@@ -59,6 +62,33 @@ export async function resumePlanRunsForTerminalTask(params: {
       })
     } catch (error) {
       const errorMessage = readErrorMessage(error)
+      try {
+        await failPlanStep({
+          planRunId: waitingStep.planRunId,
+          userId: waitingStep.userId,
+          projectId: waitingStep.projectId,
+          stepKey: waitingStep.stepKey,
+          errorCode: 'PLAN_RUN_RESUME_FAILED',
+          errorMessage,
+        })
+      } catch (failError) {
+        logger.error({
+          action: 'plan_run.resume_after_task_fail_step_failed',
+          message: readErrorMessage(failError),
+          details: {
+            taskId: params.taskId,
+            planRunId: waitingStep.planRunId,
+            stepKey: waitingStep.stepKey,
+          },
+          error: failError instanceof Error
+            ? {
+              name: failError.name,
+              message: failError.message,
+              stack: failError.stack,
+            }
+            : { message: String(failError) },
+        })
+      }
       resumedRuns.push({
         planRunId: waitingStep.planRunId,
         stepKey: waitingStep.stepKey,

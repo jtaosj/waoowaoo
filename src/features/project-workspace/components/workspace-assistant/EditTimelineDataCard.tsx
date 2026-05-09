@@ -12,6 +12,10 @@ import type {
   EditTimelineBlackboardAgentRole,
   EditTimelineProviderMode,
 } from '@/lib/edit-timeline'
+import {
+  normalizeFinalVideoEvidenceLabel,
+  normalizePlayableFinalVideoUrl,
+} from '../../canvas/final-video'
 
 type TimelineShot = EditTimelinePartData['timeline']['shots'][number]
 type TimelineSegment = EditTimelinePartData['timeline']['segments'][number]
@@ -105,25 +109,21 @@ function isFinalVideoEvidenceRef(ref: string): boolean {
     || normalized.endsWith('.webm')
 }
 
-function hasVideoContainerRef(ref: string): boolean {
-  const normalized = ref.trim().toLowerCase().split('?')[0]
-  return normalized.includes('final-videos/')
-    || normalized.endsWith('.mp4')
-    || normalized.endsWith('.mov')
-    || normalized.endsWith('.webm')
+function playableFinalVideoRef(refs: readonly string[], projectId?: string | null): string | null {
+  for (const ref of refs) {
+    const playableRef = normalizePlayableFinalVideoUrl(ref, projectId)
+    if (playableRef) return playableRef
+  }
+  return null
 }
 
-function isPlayableVideoRef(ref: string): boolean {
-  const normalized = ref.trim().toLowerCase()
-  const hasPlayableScheme = normalized.startsWith('http://')
-    || normalized.startsWith('https://')
-    || normalized.startsWith('/')
-    || normalized.startsWith('blob:')
-  return hasPlayableScheme && hasVideoContainerRef(ref)
-}
-
-function playableFinalVideoRef(refs: readonly string[]): string | null {
-  return refs.find(isPlayableVideoRef) ?? null
+function finalVideoEvidenceLabels(refs: readonly string[]): string[] {
+  const labels = new Set<string>()
+  for (const ref of refs) {
+    const label = normalizeFinalVideoEvidenceLabel(ref)
+    if (label) labels.add(label)
+  }
+  return Array.from(labels)
 }
 
 function finalVideoEvidenceRefs(
@@ -161,7 +161,13 @@ function shouldShowShotQualityScore(shot: BlackboardShot): boolean {
   return shot.status === 'scored' && Boolean(shot.providerTask.outputUrl)
 }
 
-export function EditTimelineDataCard({ data }: { data: EditTimelinePartData }) {
+export function EditTimelineDataCard({
+  data,
+  projectId,
+}: {
+  data: EditTimelinePartData
+  projectId?: string | null
+}) {
   const t = useTranslations('assistantAgent')
   const durationMs = totalDurationMs(data)
   const summary = data.confirmationSummary
@@ -171,7 +177,9 @@ export function EditTimelineDataCard({ data }: { data: EditTimelinePartData }) {
   const agentCrew = data.agentCrew
   const blackboard = data.blackboard ?? data.workflow?.blackboard
   const finalEvidenceRefs = blackboard ? finalVideoEvidenceRefs(data, blackboard) : []
-  const finalVideoUrl = playableFinalVideoRef(finalEvidenceRefs)
+  const finalVideoProjectId = projectId ?? data.projectId ?? null
+  const finalVideoUrl = playableFinalVideoRef(finalEvidenceRefs, finalVideoProjectId)
+  const finalEvidenceLabels = finalVideoEvidenceLabels(finalEvidenceRefs)
   const finalCriticStatus = blackboard ? visibleFinalCriticStatus(blackboard, finalEvidenceRefs) : 'planned'
 
   return (
@@ -245,9 +253,9 @@ export function EditTimelineDataCard({ data }: { data: EditTimelinePartData }) {
                 {t('cards.blackboard.openFinalVideo')}
               </a>
             ) : null}
-            {finalEvidenceRefs.length > 0 ? (
+            {finalEvidenceLabels.length > 0 ? (
               <span className="min-w-0 break-all text-[var(--glass-text-tertiary)]">
-                {t('cards.blackboard.finalEvidence')} · {finalEvidenceRefs.join(' / ')}
+                {t('cards.blackboard.finalEvidence')} · {finalEvidenceLabels.join(' / ')}
               </span>
             ) : null}
           </div>

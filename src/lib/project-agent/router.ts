@@ -152,6 +152,7 @@ const EDIT_FIRST_ROUTE_MARKERS = [
   'create_edit_timeline_plan',
   'validate_edit_timeline',
   'compile_edit_timeline',
+  'start_edit_timeline_video_run',
   'score_edit_timeline_trace',
   'redo_timeline_shot',
   'edittimeline',

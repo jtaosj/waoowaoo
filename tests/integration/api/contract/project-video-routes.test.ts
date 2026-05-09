@@ -96,5 +96,37 @@ describe('api contract - project video routes (operation adapter)', () => {
     }))
     expect(globalThis.fetch).toHaveBeenCalledWith('https://example.com/video.mp4')
   })
-})
 
+  it('GET /api/projects/[projectId]/video-proxy -> forwards range requests for video playback', async () => {
+    apiAdapterMock.executeProjectAgentOperationFromApi.mockResolvedValueOnce({
+      fetchUrl: 'https://example.com/video.mp4',
+    })
+
+    globalThis.fetch = vi.fn(async () => new Response('partial', {
+      status: 206,
+      headers: {
+        'content-type': 'video/mp4',
+        'content-length': '7',
+        'content-range': 'bytes 0-6/100',
+        'accept-ranges': 'bytes',
+      },
+    })) as unknown as typeof fetch
+
+    const res = await videoProxyGet(
+      buildMockRequest({
+        path: '/api/projects/project-1/video-proxy',
+        method: 'GET',
+        headers: { range: 'bytes=0-6' },
+        query: { key: 'final-videos/episode-1/final.mp4' },
+      }),
+      { params: Promise.resolve({ projectId: 'project-1' }) },
+    )
+
+    expect(res.status).toBe(206)
+    expect(globalThis.fetch).toHaveBeenCalledWith('https://example.com/video.mp4', {
+      headers: { Range: 'bytes=0-6' },
+    })
+    expect(res.headers.get('content-range')).toBe('bytes 0-6/100')
+    expect(res.headers.get('accept-ranges')).toBe('bytes')
+  })
+})

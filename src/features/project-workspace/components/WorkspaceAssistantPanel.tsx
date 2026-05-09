@@ -133,17 +133,19 @@ export default function WorkspaceAssistantPanel({
     const normalizedKey = key.trim()
     const normalizedMessage = message.trim()
     if (!normalizedKey || !normalizedMessage) return
+    if (!assistantRuntime.rawContextReady) return
     if (consumedMessageKeysRef.current.has(normalizedKey)) return
     consumedMessageKeysRef.current.add(normalizedKey)
     await sendMessage(normalizedMessage)
-  }, [sendMessage])
+  }, [assistantRuntime.rawContextReady, sendMessage])
   useEffect(() => {
     if (!autoStartMessage || !autoStartKey) return
-    if (assistantRuntime.storageLoading || assistantRuntime.pending) return
+    if (assistantRuntime.storageLoading || !assistantRuntime.rawContextReady || assistantRuntime.pending) return
     void sendAssistantMessageOnce(autoStartKey, autoStartMessage)
       .finally(() => onAutoStartConsumed?.())
   }, [
     assistantRuntime.pending,
+    assistantRuntime.rawContextReady,
     assistantRuntime.storageLoading,
     autoStartKey,
     autoStartMessage,
@@ -281,6 +283,7 @@ export default function WorkspaceAssistantPanel({
     }
   }
   const partComponents = useWorkspaceAssistantMessagePartComponents({
+    projectId,
     onConfirmOperation: handleConfirmOperation,
     onCancelOperation: handleCancelOperation,
     confirmationSubmittingKey,

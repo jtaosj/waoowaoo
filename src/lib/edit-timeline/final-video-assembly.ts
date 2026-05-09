@@ -7,8 +7,9 @@ export interface TimelinePanelVideoSource {
   panelId: string
   storyboardId: string
   panelIndex: number
-  videoUrl: string
+  videoUrl?: string | null
   videoMediaId?: string | null
+  videoMediaStorageKey?: string | null
   durationSeconds?: number | null
   caption?: string | null
   description?: string | null
@@ -43,6 +44,16 @@ function normalizeEditorId(params: {
   return params.editorProjectId?.trim() || `editor-${params.timelineId}`
 }
 
+export function resolveTimelinePanelVideoRef(source: Pick<TimelinePanelVideoSource, 'videoUrl' | 'videoMediaStorageKey'>): string | null {
+  const storageKey = source.videoMediaStorageKey?.trim()
+  if (storageKey) return storageKey
+
+  const videoUrl = source.videoUrl?.trim()
+  if (videoUrl) return videoUrl
+
+  return null
+}
+
 function durationInFrames(params: {
   fps: number
   shot: ShotNode
@@ -74,12 +85,16 @@ export function buildTimelineVideoEditorProject(
   const sourcesByShotId = new Map(input.panelVideos.map((source) => [source.shotId, source]))
   const clips: VideoClip[] = orderedShots(timeline).map((shot) => {
     const source = sourcesByShotId.get(shot.id)
-    if (!source?.videoUrl.trim()) {
+    if (!source) {
+      throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}`)
+    }
+    const videoRef = resolveTimelinePanelVideoRef(source)
+    if (!videoRef) {
       throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}`)
     }
     return {
       id: `clip-${shot.id}`,
-      src: source.videoUrl,
+      src: videoRef,
       durationInFrames: durationInFrames({
         fps: timeline.fps,
         shot,

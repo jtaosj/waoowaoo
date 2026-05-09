@@ -290,11 +290,7 @@ export function useTaskTargetStateMap(
     queryKey: queryKeys.tasks.targetStates(projectId || '', serializedTargets),
     enabled,
     staleTime: options.staleTime ?? 15000,
-    refetchInterval: (state) => {
-      const data = state.state.data as TaskTargetState[] | undefined
-      if (!data) return false
-      return data.some((item) => item.phase === 'queued' || item.phase === 'processing') ? 2000 : false
-    },
+    refetchInterval: false,
     refetchOnMount: false,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,

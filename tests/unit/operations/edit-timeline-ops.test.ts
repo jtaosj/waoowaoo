@@ -116,6 +116,26 @@ const baseTimeline: EditTimeline = {
   },
 }
 
+function buildCinematicProviderPrompt(shotId: string): string {
+  return [
+    `BLACKBOARD_PROVIDER_PROMPT:${shotId}: subject visible.`,
+    'Silent 9:16 cinematic video shot. About 5s, one single continuous shot.',
+    'Shot purpose: reveal the story beat through visible action.',
+    'Subject: Ava in the same jacket.',
+    'Opening frame: Ava is already readable in the hospital corridor.',
+    'Visible subject action: Ava opens the door and steps forward.',
+    'Middle motion: the subject crosses one small distance without hiding the face.',
+    'Ending frame: Ava holds a stable final pose that can cut into the next shot.',
+    'Scene: hospital corridor beside a glass door.',
+    'Camera: medium shot at eye level.',
+    'Composition: subject centered with the clue visible near the table.',
+    'Lighting: cool practical corridor light with a controlled noir tone.',
+    'Continuity anchors: same jacket, same corridor, same glass door.',
+    'Transition hook: the door opens into the next reveal.',
+    'Keep subject visible throughout, one simple readable action, stable framing.',
+  ].join('\n')
+}
+
 describe('edit timeline operations', () => {
   it('registers timeline operations as plan/query operations without side effects', () => {
     const registry = createProjectAgentOperationRegistryForApi()
@@ -151,6 +171,22 @@ describe('edit timeline operations', () => {
   it('registers edit-first materialize and assembly operations as confirmed write operations', () => {
     const registry = createProjectAgentOperationRegistryForApi()
 
+    expect(registry.start_edit_timeline_video_run).toMatchObject({
+      id: 'start_edit_timeline_video_run',
+      groupPath: ['edit-timeline'],
+      channels: { tool: true, api: true },
+      intent: 'act',
+      effects: {
+        writes: true,
+        billable: true,
+        destructive: false,
+        overwrite: true,
+        bulk: false,
+        externalSideEffects: true,
+        longRunning: true,
+      },
+      confirmation: { required: true },
+    })
     expect(registry.start_edit_timeline_production_run).toMatchObject({
       id: 'start_edit_timeline_production_run',
       groupPath: ['edit-timeline'],
@@ -841,7 +877,7 @@ describe('edit timeline operations', () => {
         promptPackage: {
           ...shot.promptPackage,
           imagePrompt: `BLACKBOARD_IMAGE_PROMPT:${shot.shotId}`,
-          providerPrompt: `BLACKBOARD_PROVIDER_PROMPT:${shot.shotId}: subject visible`,
+          providerPrompt: buildCinematicProviderPrompt(shot.shotId),
         },
       })),
       segmentBlackboards: plannedBlackboard.segmentBlackboards.map((segment) => ({
@@ -849,7 +885,7 @@ describe('edit timeline operations', () => {
         promptPackage: {
           ...segment.promptPackage,
           imagePrompt: `BLACKBOARD_IMAGE_PROMPT:${segment.shotIds[0]}`,
-          providerPrompt: `BLACKBOARD_PROVIDER_PROMPT:${segment.shotIds[0]}: subject visible`,
+          providerPrompt: buildCinematicProviderPrompt(segment.shotIds[0] ?? 'segment-shot'),
         },
       })),
     }
@@ -872,7 +908,7 @@ describe('edit timeline operations', () => {
     for (const step of providerSteps) {
       const shotId = step.input?.shotId
       expect(typeof shotId).toBe('string')
-      const expectedPrompt = `BLACKBOARD_PROVIDER_PROMPT:${shotId as string}: subject visible`
+      const expectedPrompt = buildCinematicProviderPrompt(shotId as string)
       expect(step.input?.promptPackage).toMatchObject({
         providerPrompt: expectedPrompt,
       })
@@ -882,6 +918,51 @@ describe('edit timeline operations', () => {
       expect(expectedPrompt).not.toContain('suspicious receipt')
       expect(expectedPrompt).not.toContain('hidden witness stepping')
     }
+  })
+
+  it('compile_edit_timeline rejects provider execution when a blackboard prompt package is not cinematic-provider ready', async () => {
+    const operation = loadOperation('compile_edit_timeline')
+    const timeline = parseEditTimeline(baseTimeline)
+    const plannedBlackboard = buildEditTimelineBlackboard({
+      timeline,
+      sourceStory: 'A noir corridor story.',
+      creativeBrief: {
+        theme: 'Noir corridor reveal',
+        protagonist: 'Ava',
+        setting: 'hospital corridor',
+        mood: 'quiet mystery',
+        twist: 'Ava steps into the light',
+        targetDurationMs: 10_000,
+        aspectRatio: '16:9',
+        missingInfo: [],
+        assumptions: [],
+      },
+      risks: [],
+    })
+    const blackboard: EditTimelineBlackboard = {
+      ...plannedBlackboard,
+      shots: plannedBlackboard.shots.map((shot) => shot.shotId === 'shot-hook'
+        ? {
+            ...shot,
+            promptPackage: {
+              ...shot.promptPackage,
+              providerPrompt: 'Ava opens a door. Make it dramatic.',
+            },
+          }
+        : shot),
+    }
+
+    await expect(operation.execute(buildContext(), {
+      timeline: baseTimeline,
+      blackboard,
+      materializeSkillId: 'media-generation',
+      materializeOperationId: 'generate_panel_video',
+      videoModel: 'google::veo-3.1-generate-preview',
+      panelIdsByShotId: {
+        'shot-hook': 'panel-hook',
+        'shot-reversal': 'panel-reversal',
+      },
+    })).rejects.toThrow(/EDIT_TIMELINE_PRODUCTION_PROMPT_PACKAGE_INCOMPLETE:shot-hook/)
   })
 
   it('compile_edit_timeline explicitly fails when a supplied blackboard lacks segment coverage', async () => {
@@ -1089,7 +1170,39 @@ describe('edit timeline operations', () => {
     expect(parsed.success).toBe(true)
   })
 
-  it('start_edit_timeline_production_run requires an exact blackboard and accepts explicit video generation config', () => {
+  it('start_edit_timeline_video_run accepts a natural-language story profile and rejects bridge payloads', () => {
+    const operation = loadOperation('start_edit_timeline_video_run')
+
+    const parsed = operation.inputSchema.safeParse({
+      confirmed: true,
+      story: 'After rain at night on a rooftop, a young woman finds a glowing paper crane. The crane flies toward an old clock tower. At the tower door, the light reveals a narrow crack.',
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      aspectRatio: '9:16',
+      shotCount: 3,
+      maxDurationSeconds: 12,
+      hasAudio: false,
+      hasSubtitle: false,
+      providerProfile: 'configured-real-provider',
+      videoModel: 'ark::doubao-seedance-2-0-fast-260128',
+      generationOptions: {
+        duration: 4,
+        resolution: '480p',
+      },
+      renderFinalVideo: true,
+    })
+    expect(parsed.success).toBe(true)
+
+    const bridgePayload = operation.inputSchema.safeParse({
+      confirmed: true,
+      timeline: baseTimeline,
+      blackboard: {},
+      videoModel: 'ark::doubao-seedance-2-0-fast-260128',
+    })
+    expect(bridgePayload.success).toBe(false)
+  })
+
+  it('start_edit_timeline_production_run keeps the reviewed timeline and blackboard bridge path explicit', () => {
     const operation = loadOperation('start_edit_timeline_production_run')
     const blackboard = buildEditTimelineBlackboard({
       timeline: parseEditTimeline(baseTimeline),
@@ -1111,7 +1224,7 @@ describe('edit timeline operations', () => {
     const missingBlackboard = operation.inputSchema.safeParse({
       confirmed: true,
       timeline: baseTimeline,
-      videoModel: 'google::veo-3.1-generate-preview',
+      videoModel: 'ark::doubao-seedance-2-0-fast-260128',
     })
     expect(missingBlackboard.success).toBe(false)
 
@@ -1119,7 +1232,7 @@ describe('edit timeline operations', () => {
       confirmed: true,
       timeline: baseTimeline,
       blackboard,
-      videoModel: 'google::veo-3.1-generate-preview',
+      videoModel: 'ark::doubao-seedance-2-0-fast-260128',
       generationOptions: {
         duration: 2,
         resolution: '480p',
@@ -1128,6 +1241,66 @@ describe('edit timeline operations', () => {
     })
 
     expect(parsed.success).toBe(true)
+  })
+
+  it('start_edit_timeline_production_run fails provider-control preflight before storyboard materialization', async () => {
+    const operation = loadOperation('start_edit_timeline_production_run')
+    const blackboard = buildEditTimelineBlackboard({
+      timeline: parseEditTimeline(baseTimeline),
+      sourceStory: 'A noir corridor story.',
+      creativeBrief: {
+        theme: 'Noir corridor reveal',
+        protagonist: 'Ava',
+        setting: 'hospital corridor',
+        mood: 'quiet mystery',
+        twist: 'Ava steps into the light',
+        targetDurationMs: 10_000,
+        aspectRatio: '16:9',
+        missingInfo: [],
+        assumptions: [],
+      },
+      risks: [],
+    })
+
+    await expect(operation.execute(buildContext(), {
+      confirmed: true,
+      timeline: baseTimeline,
+      blackboard,
+      videoModel: 'ark::doubao-seedance-2-0-fast-260128',
+      generationOptions: {
+        duration: 4,
+      },
+    })).rejects.toThrow('EDIT_TIMELINE_VIDEO_PROVIDER_UNSUPPORTED_CONTROL:referenceImageRefs')
+  })
+
+  it('score_edit_timeline_trace accepts a single PlanRun id scoring request', () => {
+    const operation = loadOperation('score_edit_timeline_trace')
+
+    expect(operation.inputSchema.safeParse({
+      planRunId: 'plan-run-edit-first-1',
+      eventLimit: 200,
+    })).toMatchObject({ success: true })
+
+    expect(operation.outputSchema.safeParse({
+      traceEvalPassRate: 100,
+      passed: true,
+      blockers: [],
+      grade: {
+        planRunId: 'plan-run-edit-first-1',
+      },
+      score: 100,
+      failures: [],
+      nextOptimizationTarget: 'browser-playback-acceptance',
+      dimensions: [
+        {
+          code: 'finalVideoPlayback',
+          status: 'passed',
+          message: 'final.video playback evidence is present.',
+          score: 1,
+          maxScore: 1,
+        },
+      ],
+    })).toMatchObject({ success: true })
   })
 
   it('redo_timeline_shot preserves revision metadata and limits affected shots', async () => {
@@ -1162,6 +1335,16 @@ describe('edit timeline operations', () => {
       targetShotId: 'shot-hook',
       affectedShotIds: ['shot-hook', 'shot-reversal'],
       skippedShotIds: [],
+      revisionId: 'shot-revision-shot-hook-trace-step-1',
+      providerTaskPlan: {
+        id: 'provider-task-redo-shot-hook-trace-step-1',
+        shotId: 'shot-hook',
+        operationId: 'generate_panel_video',
+        status: 'planned',
+        revisionId: 'shot-revision-shot-hook-trace-step-1',
+        redoReason: 'first-frame source failed trace validation',
+        affectedShotIds: ['shot-hook', 'shot-reversal'],
+      },
     })
   })
 })

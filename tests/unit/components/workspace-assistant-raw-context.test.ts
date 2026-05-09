@@ -109,6 +109,96 @@ describe('workspace assistant raw context helpers', () => {
     expect(merged[0]?.parts[0]?.type).toBe('data-edit-timeline')
   })
 
+  it('does not replace a data-rich raw assistant message with a data-poor message using the same id', () => {
+    const dataRichMessage: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: {
+              id: 'timeline-1',
+              shots: [{ id: 'shot-1', title: 'Opening', durationSec: 4 }],
+            },
+          },
+        },
+      ],
+    }
+    const dataPoorMessage: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [{ type: 'text', text: '可以开始生成视频。' }],
+    }
+
+    const merged = mergeWorkspaceAssistantRawMessages({
+      current: [dataRichMessage],
+      incoming: [dataPoorMessage],
+    })
+
+    expect(merged).toEqual([
+      {
+        id: 'assistant-edit-timeline',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'data-edit-timeline',
+            data: {
+              operationId: 'create_edit_timeline_plan',
+              timeline: {
+                id: 'timeline-1',
+                shots: [{ id: 'shot-1', title: 'Opening', durationSec: 4 }],
+              },
+            },
+          },
+          { type: 'text', text: '可以开始生成视频。' },
+        ],
+      },
+    ])
+  })
+
+  it('keeps raw edit timeline data while stripping incomplete tool parts from the same assistant message', () => {
+    const rawMessage: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: { id: 'timeline-1', shots: [{ id: 'shot-1', durationSec: 4 }] },
+          },
+        },
+        {
+          type: 'tool-invoke_operation',
+          toolCallId: 'tool-call-stale',
+          state: 'input-available',
+          input: { operationId: 'validate_edit_timeline' },
+        },
+      ],
+    }
+
+    const merged = buildWorkspaceAssistantRequestMessages({
+      rawContextMessages: [rawMessage],
+      outgoingMessages: [buildMessage({ id: 'user-confirm', role: 'user', text: '生成视频' })],
+    })
+
+    expect(merged[0]).toEqual({
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: { id: 'timeline-1', shots: [{ id: 'shot-1', durationSec: 4 }] },
+          },
+        },
+      ],
+    })
+  })
+
   it('builds assistant send requests with explicit context and raw edit-first timeline messages', () => {
     const editTimelineMessage: UIMessage = {
       id: 'assistant-edit-timeline',

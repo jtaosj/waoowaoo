@@ -63,6 +63,7 @@ describe('agent skill registry', () => {
       'create_edit_timeline_plan',
       'validate_edit_timeline',
       'compile_edit_timeline',
+      'start_edit_timeline_video_run',
       'start_edit_timeline_production_run',
       'materialize_edit_timeline_storyboard',
       'assemble_timeline_video',

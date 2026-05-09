@@ -117,7 +117,7 @@ describe('task target state map behavior', () => {
     }
   })
 
-  it('enables polling while queued/processing and merges overlay only when rules match', async () => {
+  it('keeps polling disabled and merges overlay only when rules match', async () => {
     const { useTaskTargetStateMap } = await import('@/lib/query/hooks/useTaskTargetStateMap')
 
     const result = useTaskTargetStateMap('project-1', [
@@ -126,11 +126,7 @@ describe('task target state map behavior', () => {
     ])
 
     const firstCall = runtime.useQueryCalls[0]
-    expect(typeof firstCall?.refetchInterval).toBe('function')
-    const interval = (firstCall?.refetchInterval as ((state: { state: { data?: TaskTargetState[] } }) => number | false))({
-      state: { data: runtime.apiStates },
-    })
-    expect(interval).toBe(2000)
+    expect(firstCall?.refetchInterval).toBe(false)
 
     const appearance = result.getState('CharacterAppearance', 'appearance-1')
     expect(appearance?.phase).toBe('processing')

@@ -323,6 +323,43 @@ describe('workspace node canvas projection', () => {
     expect(finalNode?.data.height).toBeGreaterThan(300)
   })
 
+  it('normalizes stored final videos to the project video proxy for browser playback', () => {
+    const projection = buildWorkspaceNodeCanvasProjection({
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      storyText: 'A real story',
+      clips: [createClip('clip-1', 'first clip content')],
+      storyboards: [
+        createStoryboard({
+          id: 'storyboard-1',
+          clipId: 'clip-1',
+          panels: [
+            createPanel({
+              id: 'panel-1',
+              panelIndex: 0,
+              description: 'first panel',
+              videoUrl: 'https://example.com/panel-1.mp4',
+            }),
+          ],
+        }),
+      ],
+      finalVideo: {
+        editorProjectId: 'editor-final',
+        url: 'http://localhost:19000/waoowaoo/final-videos/episode-1/editor-final.mp4?X-Amz-Signature=signature',
+        status: 'completed',
+        updatedAt: '2026-05-09T12:00:00.000Z',
+      },
+      savedLayouts: [],
+      translate: t,
+    })
+
+    const finalNode = projection.nodes.find((node) => node.id === 'final:episode-1')
+
+    expect(finalNode?.data.finalDetails?.finalVideo?.url)
+      .toBe('/api/projects/project-1/video-proxy?key=final-videos%2Fepisode-1%2Feditor-final.mp4')
+    expect(finalNode?.data.height).toBeGreaterThan(300)
+  })
+
   it('projects edit timeline results into draggable workspace nodes instead of an external board', () => {
     const projection = buildWorkspaceNodeCanvasProjection({
       episodeId: 'episode-1',

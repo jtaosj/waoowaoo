@@ -105,4 +105,57 @@ describe('mergeProjectAssistantThreadMessages', () => {
       incomingMessages: [staleIncomingAssistantMessage, freshUserMessage],
     })).toEqual([completedPlanMessage, freshUserMessage])
   })
+
+  it('keeps completed edit timeline data parts when the same assistant message has an incomplete tool part', () => {
+    const assistantWithTimelineAndStaleTool: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: {
+              id: 'timeline-1',
+              shots: [{ id: 'shot-1', durationSec: 4 }],
+            },
+          },
+        },
+        {
+          type: 'tool-invoke_operation',
+          toolCallId: 'tool-call-stale',
+          state: 'input-streaming',
+          input: '{"operationId":"validate_edit_timeline"',
+        },
+      ],
+    }
+    const incomingUserMessage: UIMessage = {
+      id: 'user-confirm',
+      role: 'user',
+      parts: [{ type: 'text', text: '生成视频' }],
+    }
+
+    expect(mergeProjectAssistantThreadMessages({
+      persistedMessages: [assistantWithTimelineAndStaleTool],
+      incomingMessages: [incomingUserMessage],
+    })).toEqual([
+      {
+        id: 'assistant-edit-timeline',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'data-edit-timeline',
+            data: {
+              operationId: 'create_edit_timeline_plan',
+              timeline: {
+                id: 'timeline-1',
+                shots: [{ id: 'shot-1', durationSec: 4 }],
+              },
+            },
+          },
+        ],
+      },
+      incomingUserMessage,
+    ])
+  })
 })

@@ -174,6 +174,7 @@ export interface WorkspaceCanvasFinalDetails {
   readonly finalVideo?: {
     readonly editorProjectId?: string | null
     readonly url?: string | null
+    readonly storageKey?: string | null
     readonly status?: string | null
     readonly updatedAt?: string | null
   } | null

@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import type { DataMessagePartProps } from '@assistant-ui/react'
-import { useQueryClient } from '@tanstack/react-query'
+import { type QueryClient, useQueryClient } from '@tanstack/react-query'
 import { AppIcon } from '@/components/ui/icons'
 import { apiFetch } from '@/lib/api-fetch'
 import {
@@ -12,6 +12,11 @@ import {
 } from '@/lib/edit-timeline/runtime-artifacts'
 import { queryKeys } from '@/lib/query/keys'
 import type { EditTimelinePartData, PlanRunSubmittedPartData } from '@/lib/project-agent/types'
+import {
+  extractFinalVideoStorageKey,
+  normalizeFinalVideoEvidenceLabel,
+  normalizePlayableFinalVideoUrl,
+} from '../../canvas/final-video'
 import {
   getLatestWorkspaceEditTimeline,
   publishWorkspaceEditTimeline,
@@ -212,6 +217,9 @@ export interface VisibleEditTimelineEvidence {
   providerTasks: VisibleEditTimelineProviderEvidence[]
   finalVideoRefs: string[]
   finalVideoUrl: string | null
+  finalVideoStorageKey: string | null
+  finalVideoEditorProjectId: string | null
+  finalVideoStatus: string | null
   finalCriticStatus: string | null
   finalCriticScore: number | null
 }
@@ -243,8 +251,19 @@ function isPlayableVideoRef(ref: string): boolean {
   return hasPlayableScheme && hasVideoContainerRef(ref)
 }
 
-function playableFinalVideoRef(refs: readonly string[]): string | null {
+function playableFinalVideoRef(refs: readonly string[], projectId?: string | null): string | null {
+  for (const ref of refs) {
+    const playableRef = normalizePlayableFinalVideoUrl(ref, projectId)
+    if (playableRef) return playableRef
+  }
   return refs.find(isPlayableVideoRef) ?? null
+}
+
+function addFinalVideoEvidenceRef(refs: Set<string>, value: unknown): void {
+  const text = readString(value)
+  if (!text || !isFinalVideoEvidenceRef(text)) return
+  const label = normalizeFinalVideoEvidenceLabel(text)
+  if (label) refs.add(label)
 }
 
 function visibleProviderEvidenceStatus(providerTask: VisibleEditTimelineProviderEvidence): string {
@@ -286,8 +305,7 @@ function readEditTimelineEvidence(snapshot: PlanRunSnapshot | null): VisibleEdit
   const finalCritic = isRecord(blackboard?.finalCritic) ? blackboard.finalCritic : null
   if (Array.isArray(finalCritic?.evidenceRefs)) {
     for (const ref of finalCritic.evidenceRefs) {
-      const text = readString(ref)
-      if (text && isFinalVideoEvidenceRef(text)) refs.add(text)
+      addFinalVideoEvidenceRef(refs, ref)
     }
   }
   if (Array.isArray(workflow?.artifacts)) {
@@ -296,24 +314,95 @@ function readEditTimelineEvidence(snapshot: PlanRunSnapshot | null): VisibleEdit
       const kind = readString(artifact.kind)
       const status = readString(artifact.status)
       const ref = readString(artifact.ref)
-      if (kind === 'video' && status === 'succeeded' && ref && isFinalVideoEvidenceRef(ref)) refs.add(ref)
+      if (kind === 'video' && status === 'succeeded') addFinalVideoEvidenceRef(refs, ref)
     }
   }
+  let finalVideoStorageKey: string | null = null
+  let finalVideoEditorProjectId: string | null = null
+  let finalVideoStatus: string | null = null
   if (finalVideoArtifact) {
     const finalVideoUrl = readString(finalVideoArtifact.finalVideoUrl)
       || readString(finalVideoArtifact.outputUrl)
     const storageKey = readString(finalVideoArtifact.storageKey)
-    if (finalVideoUrl && isFinalVideoEvidenceRef(finalVideoUrl)) refs.add(finalVideoUrl)
-    if (storageKey && isFinalVideoEvidenceRef(storageKey)) refs.add(storageKey)
+    finalVideoStorageKey = storageKey || extractFinalVideoStorageKey(finalVideoUrl)
+    finalVideoEditorProjectId = readString(finalVideoArtifact.editorProjectId) || null
+    finalVideoStatus = readString(finalVideoArtifact.renderStatus)
+      || readString(finalVideoArtifact.status)
+      || null
+    addFinalVideoEvidenceRef(refs, finalVideoUrl)
+    addFinalVideoEvidenceRef(refs, storageKey)
   }
   const finalVideoRefs = Array.from(refs)
   return {
     providerTasks,
     finalVideoRefs,
-    finalVideoUrl: playableFinalVideoRef(finalVideoRefs),
+    finalVideoUrl: playableFinalVideoRef(finalVideoRefs, snapshot?.planRun.projectId),
+    finalVideoStorageKey,
+    finalVideoEditorProjectId,
+    finalVideoStatus,
     finalCriticStatus: readString(finalCritic?.status) || null,
     finalCriticScore: readNumber(finalCritic?.score),
   }
+}
+
+interface VisibleFinalVideoCachePatch {
+  readonly outputUrl: string | null
+  readonly storageKey: string | null
+  readonly editorProjectId: string | null
+  readonly renderStatus: string | null
+}
+
+function readFinalVideoCachePatch(snapshot: PlanRunSnapshot | null): VisibleFinalVideoCachePatch | null {
+  const finalVideoArtifact = findLatestArtifactPayload(snapshot, FINAL_VIDEO_ARTIFACT_TYPE)
+  if (!finalVideoArtifact) return null
+  const outputUrl = readString(finalVideoArtifact.finalVideoUrl)
+    || readString(finalVideoArtifact.outputUrl)
+    || readString(finalVideoArtifact.url)
+    || null
+  const storageKey = readString(finalVideoArtifact.storageKey) || extractFinalVideoStorageKey(outputUrl)
+  if (!outputUrl && !storageKey) return null
+  const renderStatus = readString(finalVideoArtifact.renderStatus)
+    || readString(finalVideoArtifact.status)
+    || 'completed'
+  return {
+    outputUrl,
+    storageKey,
+    editorProjectId: readString(finalVideoArtifact.editorProjectId) || null,
+    renderStatus,
+  }
+}
+
+export function syncFinalVideoArtifactIntoEpisodeCache(
+  queryClient: Pick<QueryClient, 'setQueryData' | 'refetchQueries'>,
+  value: unknown,
+): boolean {
+  const snapshot = parsePlanRunSnapshot(value)
+  if (!snapshot?.planRun.episodeId) return false
+  const patch = readFinalVideoCachePatch(snapshot)
+  if (!patch) return false
+
+  const { projectId, episodeId } = snapshot.planRun
+  queryClient.setQueryData(queryKeys.episodeData(projectId, episodeId), (previous: unknown) => {
+    if (!isRecord(previous)) return previous
+    const previousEditorProject = isRecord(previous.editorProject) ? previous.editorProject : {}
+    const previousOutputUrl = readString(previousEditorProject.outputUrl) || null
+    const previousStorageKey = readString(previousEditorProject.storageKey) || null
+    const previousRenderStatus = readString(previousEditorProject.renderStatus) || null
+    const previousUpdatedAt = readString(previousEditorProject.updatedAt) || null
+    return {
+      ...previous,
+      editorProject: {
+        ...previousEditorProject,
+        ...(patch.editorProjectId ? { id: patch.editorProjectId } : {}),
+        outputUrl: patch.outputUrl ?? previousOutputUrl,
+        storageKey: patch.storageKey ?? previousStorageKey,
+        renderStatus: patch.renderStatus ?? previousRenderStatus,
+        updatedAt: previousUpdatedAt ?? new Date().toISOString(),
+      },
+    }
+  })
+  void queryClient.refetchQueries({ queryKey: queryKeys.episodeData(projectId, episodeId) })
+  return true
 }
 
 export function readVisibleEditTimelineEvidenceFromSnapshot(value: unknown): VisibleEditTimelineEvidence | null {
@@ -472,7 +561,7 @@ async function resumePlanRun(planRunId: string, locale: string): Promise<PlanRun
 }
 
 function invalidateVisibleProjectData(
-  queryClient: ReturnType<typeof useQueryClient>,
+  queryClient: QueryClient,
   snapshot: PlanRunSnapshot,
 ) {
   const { projectId, episodeId } = snapshot.planRun
@@ -482,6 +571,13 @@ function invalidateVisibleProjectData(
   if (episodeId) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.episodeData(projectId, episodeId) })
     void queryClient.invalidateQueries({ queryKey: queryKeys.storyboards.all(episodeId) })
+  }
+}
+
+function syncVisibleProjectDataForSnapshot(queryClient: QueryClient, snapshot: PlanRunSnapshot): void {
+  const syncedFinalVideo = syncFinalVideoArtifactIntoEpisodeCache(queryClient, snapshot)
+  if (syncedFinalVideo || TERMINAL_PLAN_RUN_STATUSES.has(snapshot.planRun.status)) {
+    invalidateVisibleProjectData(queryClient, snapshot)
   }
 }
 
@@ -515,6 +611,7 @@ export function PlanRunSubmittedDataCard({ data }: DataMessagePartProps<PlanRunS
         snapshotRef.current = nextSnapshot
         setSnapshot(nextSnapshot)
         publishEditTimelineArtifacts(nextSnapshot)
+        syncVisibleProjectDataForSnapshot(queryClient, nextSnapshot)
         setErrorMessage(null)
 
         const taskId = findVisibleTaskId(nextSnapshot, data.waitingTaskId ?? null)
@@ -555,7 +652,7 @@ export function PlanRunSubmittedDataCard({ data }: DataMessagePartProps<PlanRunS
             snapshotRef.current = resumedSnapshot
             setSnapshot(resumedSnapshot)
             publishEditTimelineArtifacts(resumedSnapshot)
-            invalidateVisibleProjectData(queryClient, resumedSnapshot)
+            syncVisibleProjectDataForSnapshot(queryClient, resumedSnapshot)
           }
           setResumeRunning(false)
           scheduleNext(resumedSnapshot ?? nextSnapshot)

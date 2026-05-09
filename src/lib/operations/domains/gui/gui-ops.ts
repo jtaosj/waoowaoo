@@ -12,6 +12,7 @@ import { TASK_TYPE } from '@/lib/task/types'
 import { buildDefaultTaskBillingInfo, isBillableTaskType } from '@/lib/billing'
 import { resolveMediaRefFromLegacyValue, resolveStorageKeyFromMediaValue, resolveMediaRef } from '@/lib/media/service'
 import { attachMediaFieldsToProject } from '@/lib/media/attach'
+import { extractFinalVideoStorageKey } from '@/lib/video/final-video-storage'
 import { encodeImageUrls, decodeImageUrlsFromDb } from '@/lib/contracts/image-urls-contract'
 import { deleteObject, uploadObject, generateUniqueKey, getSignedUrl } from '@/lib/storage'
 import { PRIMARY_APPEARANCE_INDEX, isArtStyleValue, type ArtStyleValue, removeLocationPromptSuffix } from '@/lib/constants'
@@ -973,7 +974,8 @@ export function createGuiOperations(): ProjectAgentOperationRegistryDraft {
           projectData: parsedProjectData,
           renderStatus: editorProject.renderStatus,
           outputUrl: editorProject.outputUrl,
-	          updatedAt: editorProject.updatedAt,
+          storageKey: extractFinalVideoStorageKey(editorProject.outputUrl),
+          updatedAt: editorProject.updatedAt,
 	        }
 	      },
 	    }),
@@ -1928,7 +1930,16 @@ export function createGuiOperations(): ProjectAgentOperationRegistryDraft {
           data: { lastEpisodeId: input.episodeId },
         }).catch((error: unknown) => logError('update lastEpisodeId failed', error))
 
-        const episodeWithSignedUrls = await attachMediaFieldsToProject(episode)
+        const episodeForResponse = episode.editorProject
+          ? {
+              ...episode,
+              editorProject: {
+                ...episode.editorProject,
+                storageKey: extractFinalVideoStorageKey(episode.editorProject.outputUrl),
+              },
+            }
+          : episode
+        const episodeWithSignedUrls = await attachMediaFieldsToProject(episodeForResponse)
         return { episode: episodeWithSignedUrls }
       },
     }),

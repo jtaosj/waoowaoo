@@ -401,12 +401,14 @@ export function WorkspaceAssistantToolCallCard(props: ToolCallMessagePartProps) 
 }
 
 interface WorkspaceAssistantMessagePartComponentsOptions {
+  projectId: string
   onConfirmOperation: (operationId: string, argsHint?: Record<string, unknown> | null) => Promise<void>
   onCancelOperation: (operationId: string) => Promise<void>
   confirmationSubmittingKey: string | null
 }
 
 export function useWorkspaceAssistantMessagePartComponents({
+  projectId,
   onConfirmOperation,
   onCancelOperation,
   confirmationSubmittingKey,
@@ -432,7 +434,7 @@ export function useWorkspaceAssistantMessagePartComponents({
         'task-submitted': TaskSubmittedDataCard,
         'task-batch-submitted': TaskBatchSubmittedDataCard,
         'plan-run-submitted': PlanRunSubmittedDataCard,
-        'edit-timeline': EditTimelineDataCard,
+        'edit-timeline': (props) => <EditTimelineDataCard {...props} projectId={projectId} />,
         plan: AgentPlanDataCard,
         'project-context': ProjectContextDataCard,
       },
@@ -441,6 +443,7 @@ export function useWorkspaceAssistantMessagePartComponents({
     confirmationSubmittingKey,
     onCancelOperation,
     onConfirmOperation,
+    projectId,
   ])
 }
 

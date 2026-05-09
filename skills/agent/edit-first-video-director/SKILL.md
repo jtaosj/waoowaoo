@@ -35,8 +35,10 @@ Allowed path:
 4. Use `compile_edit_timeline` only after validation is clean when the user needs to review a draft before execution.
    - Always pass the exact `blackboard` returned by `create_edit_timeline_plan` into `compile_edit_timeline`. If the blackboard is missing or does not cover every segment/shot, stop and report that blocker instead of compiling timeline-only.
    - For approved real video generation, pass explicit `videoModel` plus either `panelIdsByShotId` or `storyboardId` + `startPanelIndex` into `compile_edit_timeline`. This still only prepares the PlanRun draft; execution belongs to the next confirmed `execute_plan` step.
-5. Use `start_edit_timeline_production_run` when the user has approved real generation or when the UI asks to generate from an edit-first plan.
-   - Always pass the exact `timeline` and `blackboard` returned by `create_edit_timeline_plan`.
+5. Use `start_edit_timeline_video_run` when the user has approved real generation or when the UI asks to generate from an edit-first plan.
+   - Pass the natural-language story directly, plus structured run profile fields such as `episodeId`, `aspectRatio`, `shotCount`, `targetDurationMs` or `duration`, `hasAudio`, `hasSubtitle`, `providerProfile`, and an explicit `videoModel` when the user or project context provides one.
+   - Do not pass the full `timeline` or `blackboard` JSON to this operation. It owns the narrow entrypoint: `create_edit_timeline_plan` -> production compile -> PlanRun.
+   - Use `start_edit_timeline_production_run` only for internal/debug recovery when a reviewed `timeline` and `blackboard` already exist and the user has explicitly approved that exact production bridge path.
    - The operation must write each shot's `promptPackage.imagePrompt` and `promptPackage.providerPrompt` into storyboard panels before submitting provider video tasks.
    - If `videoModel` is not explicit, it may use the configured project/user video model; if no configured video model exists, report `EDIT_TIMELINE_VIDEO_MODEL_NOT_CONFIGURED`.
    - Do not treat a planned storyboard, panel, or PlanRun as a final video. Provider task ids, panel video URLs, and final.video evidence must come from runtime evidence.
@@ -44,7 +46,7 @@ Allowed path:
 7. Use `redo_timeline_shot` only for a targeted failed shot; report affected downstream shots instead of rebuilding the whole timeline.
 
 Boundaries:
-- Do not call `generate_panel_video`, `generate_episode_videos`, image generation, voice generation, music generation, or lip-sync operations directly. Real video generation must go through `start_edit_timeline_production_run` or a reviewed PlanRun path that preserves blackboard evidence.
+- Do not call `generate_panel_video`, `generate_episode_videos`, image generation, voice generation, music generation, or lip-sync operations directly. Real video generation must go through `start_edit_timeline_video_run` or a reviewed PlanRun path that preserves blackboard evidence.
 - Do not invent missing first-frame, last-frame, character, location, or style assets.
 - Do not hide validation failures with default assets, provider guesses, or silent model changes.
 - Sound Agent output is a nonblocking plan in v1. Silent video generation must not wait on sound, subtitles, music, lip-sync, or voice.

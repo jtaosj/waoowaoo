@@ -6,6 +6,7 @@ import { markTaskFailed } from '@/lib/task/service'
 import { publishTaskEvent } from '@/lib/task/publisher'
 import { TASK_EVENT_TYPE, TASK_TYPE, type TaskType } from '@/lib/task/types'
 import { cleanupAllProjectLogs } from '@/lib/logging/file-writer'
+import { resumePlanRunsForTerminalTask } from '@/lib/plan-run-runtime/task-completion'
 
 const INTERVAL_MS = Number.parseInt(process.env.WATCHDOG_INTERVAL_MS || '30000', 10) || 30000
 const HEARTBEAT_TIMEOUT_MS = Number.parseInt(process.env.TASK_HEARTBEAT_TIMEOUT_MS || '90000', 10) || 90000
@@ -153,6 +154,10 @@ async function cleanupZombieProcessingTasks() {
         userId: task.userId,
         errorCode: 'WATCHDOG_TIMEOUT',
         retryable: true,
+      })
+      await resumePlanRunsForTerminalTask({
+        taskId: task.id,
+        locale: resolveTaskLocaleFromBody(task.payload),
       })
       continue
     }

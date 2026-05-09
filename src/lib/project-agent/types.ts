@@ -215,6 +215,8 @@ export interface ProjectAgentWorkflowSnapshot {
 }
 
 export interface EditTimelinePartData {
+  projectId?: string
+  episodeId?: string | null
   timeline: ParsedEditTimeline
   sourceStory?: string
   creativeBrief?: EditTimelineCreativeBrief

@@ -21,7 +21,7 @@ import type {
   WorkspaceCanvasVideoDetails,
 } from '../node-canvas-types'
 import {
-  normalizePlayableFinalVideoUrl,
+  normalizeFinalVideoForPlayback,
   type WorkspaceCanvasFinalVideo,
 } from '../final-video'
 
@@ -944,7 +944,11 @@ export function buildWorkspaceNodeCanvasProjection({
     const finalNodeId = `final:${episodeId}`
     const totalDuration = panelsWithStoryboard.reduce((total, item) => total + (item.panel.duration ?? 0), 0)
     const imageCount = panelsWithStoryboard.filter((item) => hasImage(item.panel)).length
-    const finalVideoUrl = normalizePlayableFinalVideoUrl(finalVideo?.url)
+    const finalVideoUrl = normalizeFinalVideoForPlayback({
+      projectId,
+      url: finalVideo?.url,
+      storageKey: finalVideo?.storageKey,
+    })
     nodes.push(createNode({
       id: finalNodeId,
       fallbackX: STORY_COLUMN_X + COLUMN_GAP * 6,

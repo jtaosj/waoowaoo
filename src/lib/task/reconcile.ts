@@ -13,6 +13,7 @@ import { createScopedLogger } from '@/lib/logging/core'
 import { TASK_STATUS, TASK_EVENT_TYPE } from './types'
 import { publishTaskEvent } from './publisher'
 import { rollbackTaskBillingForTask } from './service'
+import { resumePlanRunsForTerminalTask } from '@/lib/plan-run-runtime/task-completion'
 import {
     getAllQueues,
 } from './queues'
@@ -194,6 +195,10 @@ export async function reconcileActiveTasks(): Promise<string[]> {
 
         const failed = await failOrphanedTask(task, reason)
         if (failed) {
+            await resumePlanRunsForTerminalTask({
+                taskId: task.id,
+                locale: null,
+            })
             reconciled.push(task.id)
         }
     }
@@ -245,6 +250,10 @@ export function startTaskWatchdog() {
                         compensationFailed: task.errorCode === 'BILLING_COMPENSATION_FAILED',
                     },
                     persist: false,
+                })
+                await resumePlanRunsForTerminalTask({
+                    taskId: task.id,
+                    locale: null,
                 })
             }
 

@@ -16,8 +16,10 @@ import {
   editTimelineConfirmationSummarySchema,
   parseEditTimeline,
   referenceAssetSchema,
+  resolveTimelinePanelVideoRef,
   gradePersistedEditFirstPlanRunTraceRound,
   campaignScoreInputSchema,
+  mapControlPayloadToVideoProviderInput,
   type EditTimelineBlackboard,
   type EditTimelinePromptPackage,
   type EditTimelineSegmentBlackboard,
@@ -40,12 +42,15 @@ import {
   persistEditTimelineProviderEvidence,
   readEditTimelineBlackboardFromSnapshot,
   readEditTimelineWorkflowFromSnapshot,
+  type EditTimelinePlanRunSnapshot,
 } from '@/lib/edit-timeline/runtime-artifact-writer'
 import { executeAgentPlan, type ExecutablePlanInput } from '@/lib/plan-run-runtime/executor'
-import { createPlanArtifact, getPlanRunSnapshot } from '@/lib/plan-run-runtime/service'
+import { createPlanArtifact, getPlanRunSnapshot, getPlanRunTraceSummary } from '@/lib/plan-run-runtime/service'
+import type { PlanRunTraceSummary } from '@/lib/plan-run-runtime/trace-summary'
 import { isConfirmedOperationInput, shouldRequireAssistantConfirmation } from '@/lib/operations/confirmation'
 import { defineOperation } from '@/lib/operations/define-operation'
 import { createProjectAgentOperationRegistryForApi } from '@/lib/operations/registry'
+import { parseModelKeyStrict } from '@/lib/ai-registry/selection'
 import {
   writeOperationDataPart,
   type ProjectAgentOperationContext,
@@ -93,6 +98,13 @@ const EFFECTS_PRODUCTION_RUN = {
   externalSideEffects: true,
   longRunning: true,
 } as const
+
+const START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID = 'start_edit_timeline_video_run'
+const START_EDIT_TIMELINE_PRODUCTION_RUN_OPERATION_ID = 'start_edit_timeline_production_run'
+const START_EDIT_TIMELINE_RUN_OPERATION_IDS = new Set<string>([
+  START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID,
+  START_EDIT_TIMELINE_PRODUCTION_RUN_OPERATION_ID,
+])
 
 const nonEmptyStringSchema = z.string().trim().min(1)
 
@@ -294,16 +306,7 @@ const compileEditTimelineInputSchema = z.object({
   assemblyOperationId: nonEmptyStringSchema.optional(),
   renderFinalVideo: z.boolean().optional(),
 }).strict().superRefine((value, ctx) => {
-  const hasProviderTargetInput = Boolean(
-    value.videoModel
-    || value.firstLastFrameModel
-    || value.storyboardId
-    || value.startPanelIndex !== undefined
-    || value.panelIdsByShotId
-    || value.sourceFrameRefByShotId
-    || value.mediaRefs
-    || value.generationOptions,
-  )
+  const hasProviderTargetInput = hasProviderExecutionInput(value)
   const hasFinalAssemblyInput = Boolean(value.assembleFinalVideo || value.assemblySkillId || value.assemblyOperationId || value.renderFinalVideo)
   if (!hasProviderTargetInput && !hasFinalAssemblyInput) return
   if (!value.videoModel) {
@@ -381,6 +384,73 @@ const productionRunResultSchema = z.object({
   snapshot: z.unknown(),
 }).strict()
 
+const startEditTimelineVideoRunInputSchema = z.object({
+  confirmed: z.boolean().optional(),
+  story: nonEmptyStringSchema.optional(),
+  goal: nonEmptyStringSchema.optional(),
+  projectId: nonEmptyStringSchema.optional(),
+  episodeId: nonEmptyStringSchema.optional(),
+  timelineId: nonEmptyStringSchema.optional(),
+  title: nonEmptyStringSchema.optional(),
+  aspectRatio: nonEmptyStringSchema.optional(),
+  fps: z.number().positive().optional(),
+  duration: z.number().positive().optional(),
+  maxDurationSeconds: z.number().positive().optional(),
+  targetDurationMs: z.number().int().positive().optional(),
+  shotCount: z.number().int().min(1).max(6).optional(),
+  style: nonEmptyStringSchema.optional(),
+  hasAudio: z.boolean().optional(),
+  hasSubtitle: z.boolean().optional(),
+  outline: z.string().trim().optional(),
+  providerProfile: nonEmptyStringSchema.optional(),
+  videoModel: nonEmptyStringSchema.optional(),
+  firstLastFrameModel: nonEmptyStringSchema.optional(),
+  mediaRefs: z.record(nonEmptyStringSchema).optional(),
+  generationOptions: z.record(generationOptionValueSchema).optional(),
+  renderFinalVideo: z.boolean().optional(),
+  references: z.array(referenceAssetSchema).optional(),
+  continuityBible: continuityBibleSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  const story = value.story?.trim()
+  const goal = value.goal?.trim()
+  if (!story && !goal) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['story'],
+      message: 'EDIT_TIMELINE_VIDEO_RUN_STORY_REQUIRED',
+    })
+  }
+  if (story && goal && story.replace(/\s+/g, ' ') !== goal.replace(/\s+/g, ' ')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['goal'],
+      message: 'EDIT_TIMELINE_VIDEO_RUN_STORY_AMBIGUOUS',
+    })
+  }
+  if (value.duration !== undefined && value.maxDurationSeconds !== undefined) {
+    const durationMs = Math.round(value.duration * 1000)
+    const maxDurationMs = Math.round(value.maxDurationSeconds * 1000)
+    if (durationMs !== maxDurationMs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['maxDurationSeconds'],
+        message: 'EDIT_TIMELINE_VIDEO_RUN_DURATION_AMBIGUOUS',
+      })
+    }
+  }
+  const explicitDurationSeconds = value.duration ?? value.maxDurationSeconds
+  if (explicitDurationSeconds !== undefined && value.targetDurationMs !== undefined) {
+    const explicitDurationMs = Math.round(explicitDurationSeconds * 1000)
+    if (explicitDurationMs !== value.targetDurationMs) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targetDurationMs'],
+        message: 'EDIT_TIMELINE_VIDEO_RUN_DURATION_AMBIGUOUS',
+      })
+    }
+  }
+})
+
 const startEditTimelineProductionRunInputSchema = z.object({
   confirmed: z.boolean().optional(),
   timeline: z.unknown(),
@@ -393,7 +463,36 @@ const startEditTimelineProductionRunInputSchema = z.object({
   renderFinalVideo: z.boolean().optional(),
 }).strict()
 
-const scoreEditTimelineTraceInputSchema = z.object({
+interface ProviderExecutionInputShape {
+  videoModel?: string
+  firstLastFrameModel?: string
+  storyboardId?: string
+  startPanelIndex?: number
+  panelIdsByShotId?: Record<string, string>
+  sourceFrameRefByShotId?: Record<string, string>
+  mediaRefs?: Record<string, string>
+  generationOptions?: Record<string, z.output<typeof generationOptionValueSchema>>
+}
+
+function hasProviderExecutionInput(value: ProviderExecutionInputShape): boolean {
+  return Boolean(
+    value.videoModel
+    || value.firstLastFrameModel
+    || value.storyboardId
+    || value.startPanelIndex !== undefined
+    || value.panelIdsByShotId
+    || value.sourceFrameRefByShotId
+    || value.mediaRefs
+    || value.generationOptions,
+  )
+}
+
+const scoreEditTimelineSinglePlanRunInputSchema = z.object({
+  planRunId: nonEmptyStringSchema,
+  eventLimit: z.number().int().positive().optional(),
+}).strict()
+
+const scoreEditTimelineTraceRoundInputSchema = z.object({
   initialPlanRunId: nonEmptyStringSchema,
   resumePlanRunId: nonEmptyStringSchema,
   expectedOperationId: nonEmptyStringSchema,
@@ -405,11 +504,28 @@ const scoreEditTimelineTraceInputSchema = z.object({
   capturedNewIssue: z.boolean().optional(),
 }).strict()
 
+const scoreEditTimelineTraceInputSchema = z.union([
+  scoreEditTimelineSinglePlanRunInputSchema,
+  scoreEditTimelineTraceRoundInputSchema,
+])
+
+const scoreEditTimelineDimensionSchema = z.object({
+  code: nonEmptyStringSchema,
+  status: z.enum(['passed', 'warning', 'blocked']),
+  message: nonEmptyStringSchema,
+  score: z.number().min(0),
+  maxScore: z.number().positive(),
+}).strict()
+
 const scoreEditTimelineTraceOutputSchema = z.object({
   traceEvalPassRate: z.number().min(0).max(100),
   passed: z.boolean(),
   blockers: z.array(nonEmptyStringSchema),
   grade: z.unknown(),
+  score: z.number().min(0).max(100).optional(),
+  failures: z.array(nonEmptyStringSchema).optional(),
+  nextOptimizationTarget: nonEmptyStringSchema.optional(),
+  dimensions: z.array(scoreEditTimelineDimensionSchema).optional(),
 }).strict()
 
 const redoTimelineShotInputSchema = z.object({
@@ -426,11 +542,21 @@ const redoTimelineShotOutputSchema = z.object({
     targetShotId: nonEmptyStringSchema,
     affectedShotIds: z.array(nonEmptyStringSchema),
     skippedShotIds: z.array(nonEmptyStringSchema),
+    revisionId: nonEmptyStringSchema,
     revision: z.object({
       parentShotId: nonEmptyStringSchema,
       sourceTraceId: nonEmptyStringSchema.optional(),
       redoReason: nonEmptyStringSchema,
       affectedDependencies: z.array(nonEmptyStringSchema),
+    }).strict(),
+    providerTaskPlan: z.object({
+      id: nonEmptyStringSchema,
+      shotId: nonEmptyStringSchema,
+      operationId: z.literal('generate_panel_video'),
+      status: z.literal('planned'),
+      revisionId: nonEmptyStringSchema,
+      redoReason: nonEmptyStringSchema,
+      affectedShotIds: z.array(nonEmptyStringSchema),
     }).strict(),
   }).strict(),
 }).strict()
@@ -472,6 +598,29 @@ const startEditTimelineProductionRunOutputSchema = z.object({
   planRun: productionRunResultSchema,
   workflow: projectAgentWorkflowSchema,
   blackboard: editTimelineBlackboardSchema,
+}).strict()
+
+const startEditTimelineRunProfileSchema = z.object({
+  story: nonEmptyStringSchema,
+  aspectRatio: nonEmptyStringSchema,
+  targetDurationMs: z.number().int().positive(),
+  shotCount: z.number().int().min(1),
+  providerProfile: nonEmptyStringSchema.nullable(),
+  videoModel: nonEmptyStringSchema,
+}).strict()
+
+const startEditTimelineCostPreflightSchema = z.object({
+  providerTaskCount: z.number().int().min(0),
+  finalAssemblyCount: z.number().int().min(0),
+  billable: z.boolean(),
+  confirmationRequired: z.boolean(),
+  estimateLabel: nonEmptyStringSchema,
+}).strict()
+
+const startEditTimelineVideoRunOutputSchema = startEditTimelineProductionRunOutputSchema.extend({
+  runProfile: startEditTimelineRunProfileSchema,
+  costPreflight: startEditTimelineCostPreflightSchema,
+  nextRequiredAction: z.enum(['monitor_plan_run', 'inspect_failed_plan_run']),
 }).strict()
 
 type CreateEditTimelinePlanInput = z.output<typeof createEditTimelinePlanInputSchema>
@@ -1764,6 +1913,12 @@ function compileTimeline(input: z.output<typeof compileEditTimelineInputSchema>)
     })
   }
   const timeline = parseEditTimeline(input.timeline)
+  if (input.blackboard && hasProviderExecutionInput(input)) {
+    assertBlackboardPromptCoverage({
+      timeline,
+      blackboard: input.blackboard,
+    })
+  }
   const plan = compileEditTimelineToExecutablePlan(input.timeline, {
     skillId: input.materializeSkillId,
     materializeOperationId: input.materializeOperationId,
@@ -1849,6 +2004,61 @@ function orderedTimelineShots(timeline: ParsedEditTimeline): ShotNode[] {
   })
 }
 
+const CINEMATIC_PROMPT_PACKAGE_REQUIREMENTS = [
+  'subject',
+  'action',
+  'scene',
+  'camera-angle',
+  'camera-movement',
+  'lighting-tone',
+  'time-change',
+  'first-last-frame-relation',
+] as const
+
+type CinematicPromptPackageRequirement = typeof CINEMATIC_PROMPT_PACKAGE_REQUIREMENTS[number]
+
+function normalizePromptText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function missingCinematicPromptPackageRequirements(
+  promptPackage: EditTimelinePromptPackage,
+): CinematicPromptPackageRequirement[] {
+  const promptText = normalizePromptText(`${promptPackage.imagePrompt}\n${promptPackage.providerPrompt}`)
+  const missing: CinematicPromptPackageRequirement[] = []
+
+  if (!promptPackage.subject.trim()) missing.push('subject')
+  if (!promptPackage.action.trim()) missing.push('action')
+  if (!promptPackage.scene.trim()) missing.push('scene')
+  if (!promptPackage.camera.trim() || !promptText.includes('camera')) {
+    missing.push('camera-angle')
+  }
+  if (!promptPackage.motion.trim() || !promptText.includes('middle motion:')) {
+    missing.push('camera-movement')
+  }
+  if (!promptText.includes('lighting:')) {
+    missing.push('lighting-tone')
+  }
+  if (!/\babout\s+\d+(?:\.\d+)?\s*s\b/.test(promptText) && !promptText.includes('duration')) {
+    missing.push('time-change')
+  }
+  if (!promptText.includes('opening frame:') || !promptText.includes('ending frame:')) {
+    missing.push('first-last-frame-relation')
+  }
+
+  return missing
+}
+
+function assertCinematicPromptPackageReady(params: {
+  shotId: string
+  promptPackage: EditTimelinePromptPackage
+}): void {
+  const missing = missingCinematicPromptPackageRequirements(params.promptPackage)
+  if (missing.length > 0) {
+    throw new Error(`EDIT_TIMELINE_PRODUCTION_PROMPT_PACKAGE_INCOMPLETE:${params.shotId}:${missing.join(',')}`)
+  }
+}
+
 function assertBlackboardPromptCoverage(params: {
   timeline: ParsedEditTimeline
   blackboard: EditTimelineBlackboard
@@ -1886,6 +2096,10 @@ function assertBlackboardPromptCoverage(params: {
     if (blackboardShot.promptPackage.providerPrompt.trim().length === 0) {
       throw new Error(`EDIT_TIMELINE_PRODUCTION_VIDEO_PROMPT_MISSING:${shot.id}`)
     }
+    assertCinematicPromptPackageReady({
+      shotId: shot.id,
+      promptPackage: blackboardShot.promptPackage,
+    })
     promptPackagesByShotId.set(shot.id, blackboardShot.promptPackage)
   }
 
@@ -1991,6 +2205,220 @@ function assertProductionPlanUsesBlackboardPrompts(params: {
     if (!seenShotIds.has(shotId)) {
       throw new Error(`EDIT_TIMELINE_PRODUCTION_STEP_MISSING_FOR_SHOT:${shotId}`)
     }
+  }
+}
+
+type ScoreEditTimelineDimension = z.output<typeof scoreEditTimelineDimensionSchema>
+
+function buildTraceScoreDimension(params: {
+  code: string
+  passed: boolean
+  blockedMessage: string
+  passedMessage: string
+}): ScoreEditTimelineDimension {
+  return {
+    code: params.code,
+    status: params.passed ? 'passed' : 'blocked',
+    message: params.passed ? params.passedMessage : params.blockedMessage,
+    score: params.passed ? 1 : 0,
+    maxScore: 1,
+  }
+}
+
+function readRecordPropertyOrNull(object: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> | null {
+  if (!object) return null
+  const value = object[key]
+  return isRecord(value) ? value : null
+}
+
+function readNonEmptyStringProperty(object: Record<string, unknown> | null | undefined, key: string): string | null {
+  if (!object) return null
+  const value = object[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function hasPlayableFinalVideoRef(ref: string): boolean {
+  const normalized = ref.trim().toLowerCase()
+  return normalized.endsWith('.mp4')
+    || normalized.endsWith('.mov')
+    || normalized.endsWith('.webm')
+    || normalized.includes('final-video')
+    || normalized.includes('final-videos/')
+    || normalized.includes('/video-editor/')
+}
+
+function readWorkflowFinalVideoRefs(workflow: ProjectAgentWorkflowSnapshot | null): string[] {
+  if (!workflow) return []
+  return workflow.artifacts
+    .filter((artifact) => artifact.kind === 'video' && artifact.status === 'succeeded' && artifact.ref)
+    .map((artifact) => artifact.ref)
+    .filter((ref): ref is string => typeof ref === 'string' && ref.trim().length > 0)
+}
+
+function readPlanArtifactFinalVideoRefs(snapshot: EditTimelinePlanRunSnapshot): string[] {
+  const refs: string[] = []
+  for (const artifact of snapshot.artifacts) {
+    if (artifact.artifactType !== 'final.video') continue
+    if (artifact.refId.trim()) refs.push(artifact.refId.trim())
+
+    const payload = isRecord(artifact.payload) ? artifact.payload : null
+    for (const key of ['storageKey', 'finalVideoUrl', 'outputUrl', 'url', 'editorProjectId'] as const) {
+      const ref = readNonEmptyStringProperty(payload, key)
+      if (ref) refs.push(ref)
+    }
+  }
+  return [...new Set(refs)]
+}
+
+function scoreProviderPayloadSteps(snapshot: EditTimelinePlanRunSnapshot): boolean {
+  const providerSteps = snapshot.steps.filter((step) => step.operationId === 'generate_panel_video')
+  if (providerSteps.length === 0) return false
+  return providerSteps.every((step) => {
+    const promptPackage = readRecordPropertyOrNull(step.input, 'promptPackage')
+    const controlPayload = readRecordPropertyOrNull(step.input, 'controlPayload')
+    const providerPrompt = readNonEmptyStringProperty(promptPackage, 'providerPrompt')
+    const imagePrompt = readNonEmptyStringProperty(promptPackage, 'imagePrompt')
+    const controlPrompt = readNonEmptyStringProperty(controlPayload, 'prompt')
+    return Boolean(providerPrompt && imagePrompt && controlPrompt && providerPrompt === controlPrompt)
+  })
+}
+
+function scoreBlackboardCoverage(blackboard: EditTimelineBlackboard | null): boolean {
+  if (!blackboard) return false
+  if (blackboard.macroScript.length === 0 || blackboard.segmentBlackboards.length === 0 || blackboard.shots.length === 0) {
+    return false
+  }
+  return blackboard.shots.every((shot) => (
+    shot.promptPackage.imagePrompt.trim().length > 0
+    && shot.promptPackage.providerPrompt.trim().length > 0
+    && missingCinematicPromptPackageRequirements(shot.promptPackage).length === 0
+  ))
+}
+
+function scoreProviderTaskCompletion(blackboard: EditTimelineBlackboard | null, snapshot: EditTimelinePlanRunSnapshot): boolean {
+  if (blackboard && blackboard.shots.length > 0) {
+    return blackboard.shots.every((shot) => (
+      shot.providerTask.status === 'succeeded'
+      && typeof shot.providerTask.outputUrl === 'string'
+      && shot.providerTask.outputUrl.trim().length > 0
+    ))
+  }
+  const providerSteps = snapshot.steps.filter((step) => step.operationId === 'generate_panel_video')
+  return providerSteps.length > 0 && providerSteps.every((step) => step.status === 'completed')
+}
+
+function scoreSingleFilmCriticTarget(blackboard: EditTimelineBlackboard | null): boolean {
+  const target = blackboard?.finalCritic.nextOptimizationTarget.trim()
+  if (!target) return false
+  return !target.includes('\n') && !target.includes(',') && !target.includes('|')
+}
+
+function scoreFinalVideoPlaybackEvidence(params: {
+  blackboard: EditTimelineBlackboard | null
+  workflow: ProjectAgentWorkflowSnapshot | null
+  snapshot: EditTimelinePlanRunSnapshot
+}): boolean {
+  const evidenceRefs = [
+    ...(params.blackboard?.finalCritic.evidenceRefs ?? []),
+    ...readWorkflowFinalVideoRefs(params.workflow),
+    ...readPlanArtifactFinalVideoRefs(params.snapshot),
+  ]
+  return evidenceRefs.some(hasPlayableFinalVideoRef)
+}
+
+function scorePlanRunRouting(snapshot: EditTimelinePlanRunSnapshot, traceSummary: PlanRunTraceSummary): boolean {
+  const operations = new Set([
+    ...snapshot.steps.map((step) => step.operationId),
+    ...traceSummary.operationOrder,
+  ])
+  return operations.has('generate_panel_video') && operations.has('assemble_timeline_video')
+}
+
+function scoreEditTimelineSinglePlanRunTrace(params: {
+  planRunId: string
+  snapshot: EditTimelinePlanRunSnapshot
+  traceSummary: PlanRunTraceSummary
+}): z.output<typeof scoreEditTimelineTraceOutputSchema> {
+  const blackboard = readEditTimelineBlackboardFromSnapshot(params.snapshot)
+  const workflowPayload = readEditTimelineWorkflowFromSnapshot(params.snapshot)
+  const workflowParse = workflowPayload ? projectAgentWorkflowSchema.safeParse(workflowPayload) : null
+  const workflow = workflowParse?.success ? workflowParse.data : null
+  const nextOptimizationTarget = blackboard?.finalCritic.nextOptimizationTarget.trim()
+    || params.traceSummary.firstError?.message
+    || 'browser-playback-acceptance'
+  const dimensions = [
+    buildTraceScoreDimension({
+      code: 'routing',
+      passed: scorePlanRunRouting(params.snapshot, params.traceSummary),
+      passedMessage: 'PlanRun selected edit-first provider steps and final.video assembly.',
+      blockedMessage: 'PlanRun did not include both generate_panel_video and assemble_timeline_video.',
+    }),
+    buildTraceScoreDimension({
+      code: 'blackboardCoverage',
+      passed: scoreBlackboardCoverage(blackboard),
+      passedMessage: 'EditTimelineBlackboard covers macro script, segment boards, and provider-ready shot prompt packages.',
+      blockedMessage: 'EditTimelineBlackboard is missing coverage or cinematic prompt package requirements.',
+    }),
+    buildTraceScoreDimension({
+      code: 'providerPayload',
+      passed: scoreProviderPayloadSteps(params.snapshot),
+      passedMessage: 'Provider steps carry blackboard promptPackage and matching controlPayload prompt.',
+      blockedMessage: 'At least one provider step is missing a promptPackage or matching controlPayload prompt.',
+    }),
+    buildTraceScoreDimension({
+      code: 'taskCompletion',
+      passed: scoreProviderTaskCompletion(blackboard, params.snapshot),
+      passedMessage: 'All provider panel video tasks have completed output evidence.',
+      blockedMessage: 'Provider panel video tasks are not all completed with output URLs.',
+    }),
+    buildTraceScoreDimension({
+      code: 'finalVideoPlayback',
+      passed: scoreFinalVideoPlaybackEvidence({ blackboard, workflow, snapshot: params.snapshot }),
+      passedMessage: 'final.video playback evidence is present.',
+      blockedMessage: 'No playable final.video evidence ref is present.',
+    }),
+    buildTraceScoreDimension({
+      code: 'filmCriticNextTarget',
+      passed: scoreSingleFilmCriticTarget(blackboard),
+      passedMessage: 'Film Critic selected one next optimization target.',
+      blockedMessage: 'Film Critic has not selected one concrete next optimization target.',
+    }),
+  ]
+  const earned = dimensions.reduce((sum, dimension) => sum + dimension.score, 0)
+  const total = dimensions.reduce((sum, dimension) => sum + dimension.maxScore, 0)
+  const score = total > 0 ? Math.round((earned / total) * 100) : 0
+  const blockers = dimensions
+    .filter((dimension) => dimension.status === 'blocked')
+    .map((dimension) => dimension.code)
+  const malformedTraceBlockers = params.traceSummary.malformedErrorEvents.length > 0
+    ? ['malformed-trace-error-event']
+    : []
+  const failures = [...blockers, ...malformedTraceBlockers]
+  const grade = {
+    planRunId: params.planRunId,
+    score,
+    dimensions,
+    failures,
+    nextOptimizationTarget,
+    traceSummary: {
+      eventCount: params.traceSummary.eventCount,
+      stepOrder: params.traceSummary.stepOrder,
+      operationOrder: params.traceSummary.operationOrder,
+      firstError: params.traceSummary.firstError,
+      hasInputBuildFailure: params.traceSummary.hasInputBuildFailure,
+      malformedErrorEventCount: params.traceSummary.malformedErrorEvents.length,
+    },
+  }
+
+  return {
+    traceEvalPassRate: score,
+    passed: failures.length === 0,
+    blockers: failures,
+    grade,
+    score,
+    failures,
+    nextOptimizationTarget,
+    dimensions,
   }
 }
 
@@ -2138,7 +2566,10 @@ async function collectPanelVideosFromShotMap(params: {
       id: { in: panelIds },
       storyboard: { episodeId: params.episodeId },
     },
-    include: { storyboard: true },
+    include: {
+      storyboard: true,
+      videoMedia: { select: { storageKey: true } },
+    },
   })
   const panelsById = new Map(panels.map((panel) => [panel.id, panel]))
 
@@ -2148,21 +2579,22 @@ async function collectPanelVideosFromShotMap(params: {
     if (!panel) {
       throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_MISSING:${shot.id}:${panelId}`)
     }
-    const videoUrl = panel.videoUrl?.trim()
-    if (!videoUrl) {
-      throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}:${panel.id}`)
-    }
-    return {
+    const source: TimelinePanelVideoSource = {
       shotId: shot.id,
       panelId: panel.id,
       storyboardId: panel.storyboardId,
       panelIndex: panel.panelIndex,
-      videoUrl,
+      videoUrl: panel.videoUrl,
       videoMediaId: panel.videoMediaId,
+      videoMediaStorageKey: panel.videoMedia?.storageKey ?? null,
       durationSeconds: panel.duration,
       caption: panel.srtSegment,
       description: panel.description,
     }
+    if (!resolveTimelinePanelVideoRef(source)) {
+      throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}:${panel.id}`)
+    }
+    return source
   })
 }
 
@@ -2179,6 +2611,9 @@ async function collectPanelVideosFromStoryboard(params: {
     include: {
       panels: {
         orderBy: { panelIndex: 'asc' },
+        include: {
+          videoMedia: { select: { storageKey: true } },
+        },
       },
     },
   })
@@ -2191,21 +2626,22 @@ async function collectPanelVideosFromStoryboard(params: {
     if (!panel) {
       throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_MISSING:${shot.id}:index-${String(index)}`)
     }
-    const videoUrl = panel.videoUrl?.trim()
-    if (!videoUrl) {
-      throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}:${panel.id}`)
-    }
-    return {
+    const source: TimelinePanelVideoSource = {
       shotId: shot.id,
       panelId: panel.id,
       storyboardId: storyboard.id,
       panelIndex: panel.panelIndex,
-      videoUrl,
+      videoUrl: panel.videoUrl,
       videoMediaId: panel.videoMediaId,
+      videoMediaStorageKey: panel.videoMedia?.storageKey ?? null,
       durationSeconds: panel.duration,
       caption: panel.srtSegment,
       description: panel.description,
     }
+    if (!resolveTimelinePanelVideoRef(source)) {
+      throw new Error(`EDIT_TIMELINE_FINAL_VIDEO_PANEL_VIDEO_MISSING:${shot.id}:${panel.id}`)
+    }
+    return source
   })
 }
 
@@ -2412,10 +2848,10 @@ async function invokeProductionPlanStep(params: {
       operationId: params.operationId,
     })
   }
-  if (operation.id === 'start_edit_timeline_production_run') {
+  if (START_EDIT_TIMELINE_RUN_OPERATION_IDS.has(operation.id)) {
     return buildProductionToolResultError({
       code: 'OPERATION_NOT_ALLOWED',
-      message: 'start_edit_timeline_production_run cannot call itself',
+      message: `${operation.id} cannot call itself`,
       operationId: params.operationId,
     })
   }
@@ -2449,7 +2885,7 @@ async function invokeProductionPlanStep(params: {
     const summary = operation.confirmation.summary
       || `Operation ${params.operationId} requires confirmation.`
     writeOperationDataPart<ConfirmationRequestPartData>(params.ctx.writer, 'data-confirmation-request', {
-      operationId: 'start_edit_timeline_production_run',
+      operationId: START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID,
       summary,
       argsHint: {
         skillId: params.skillId,
@@ -2508,22 +2944,50 @@ async function resolveProductionVideoModel(params: {
   return configured
 }
 
+function assertProductionVideoModelKey(videoModel: string): void {
+  if (!parseModelKeyStrict(videoModel)) {
+    throw new Error(`EDIT_TIMELINE_VIDEO_MODEL_INVALID:${videoModel}`)
+  }
+}
+
+function assertProductionFirstLastFrameModelKey(firstLastFrameModel: string | undefined): void {
+  const model = firstLastFrameModel?.trim()
+  if (!model) return
+  if (!parseModelKeyStrict(model)) {
+    throw new Error(`EDIT_TIMELINE_FIRST_LAST_FRAME_MODEL_INVALID:${model}`)
+  }
+}
+
+function assertProductionProviderControls(timeline: ParsedEditTimeline): void {
+  for (const shot of timeline.shots) {
+    mapControlPayloadToVideoProviderInput({
+      ...shot.control,
+      durationSeconds: shot.control.durationSeconds ?? Number((shot.durationMs / 1000).toFixed(3)),
+      aspectRatio: shot.control.aspectRatio ?? timeline.aspectRatio,
+    })
+  }
+}
+
 async function startEditTimelineProductionRun(
   ctx: ProjectAgentOperationContext,
   input: z.output<typeof startEditTimelineProductionRunInputSchema>,
+  options: { operationId: string } = { operationId: START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID },
 ): Promise<z.output<typeof startEditTimelineProductionRunOutputSchema>> {
   const timeline = parseEditTimeline(input.timeline)
   assertBlackboardPromptCoverage({ timeline, blackboard: input.blackboard })
+  const videoModel = await resolveProductionVideoModel({
+    ctx,
+    explicitVideoModel: input.videoModel,
+  })
+  assertProductionVideoModelKey(videoModel)
+  assertProductionFirstLastFrameModelKey(input.firstLastFrameModel)
+  assertProductionProviderControls(timeline)
 
   const materialized = await materializeTimelineStoryboard(ctx, {
     confirmed: true,
     timeline,
     blackboard: input.blackboard,
     episodeId: input.episodeId,
-  })
-  const videoModel = await resolveProductionVideoModel({
-    ctx,
-    explicitVideoModel: input.videoModel,
   })
   const compileInput = compileEditTimelineInputSchema.parse({
     timeline,
@@ -2628,7 +3092,7 @@ async function startEditTimelineProductionRun(
   workflow = projectAgentWorkflowSchema.parse(readEditTimelineWorkflowFromSnapshot(latestSnapshot) ?? workflow)
 
   writeOperationDataPart<PlanRunSubmittedPartData>(ctx.writer, 'data-plan-run-submitted', {
-    operationId: 'start_edit_timeline_production_run',
+    operationId: options.operationId,
     planRunId: planRun.planRunId,
     status: planRun.status || (planRun.success ? 'running' : 'failed'),
     executedStepKeys: planRun.executedStepKeys ?? [],
@@ -2645,8 +3109,131 @@ async function startEditTimelineProductionRun(
   }
 }
 
+function resolveVideoRunStory(input: z.output<typeof startEditTimelineVideoRunInputSchema>): string {
+  const story = input.story?.trim() || input.goal?.trim()
+  if (!story) {
+    throw new Error('EDIT_TIMELINE_VIDEO_RUN_STORY_REQUIRED')
+  }
+  return story
+}
+
+function buildPlanInputFromVideoRun(
+  input: z.output<typeof startEditTimelineVideoRunInputSchema>,
+  story: string,
+): CreateEditTimelinePlanInput {
+  const duration = input.duration ?? input.maxDurationSeconds
+  return {
+    goal: story,
+    ...(input.timelineId ? { timelineId: input.timelineId } : {}),
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+    ...(input.fps !== undefined ? { fps: input.fps } : {}),
+    ...(duration !== undefined ? { duration } : {}),
+    ...(input.targetDurationMs !== undefined ? { targetDurationMs: input.targetDurationMs } : {}),
+    ...(input.shotCount !== undefined ? { shotCount: input.shotCount } : {}),
+    ...(input.style ? { style: input.style } : {}),
+    ...(input.hasAudio !== undefined ? { hasAudio: input.hasAudio } : {}),
+    ...(input.hasSubtitle !== undefined ? { hasSubtitle: input.hasSubtitle } : {}),
+    ...(input.outline !== undefined ? { outline: input.outline } : {}),
+    ...(input.references ? { references: input.references } : {}),
+    ...(input.continuityBible ? { continuityBible: input.continuityBible } : {}),
+  }
+}
+
+function buildVideoRunCostPreflight(params: {
+  shotCount: number
+  renderFinalVideo: boolean
+}): z.output<typeof startEditTimelineCostPreflightSchema> {
+  return {
+    providerTaskCount: params.shotCount,
+    finalAssemblyCount: params.renderFinalVideo ? 1 : 0,
+    billable: true,
+    confirmationRequired: true,
+    estimateLabel: `provider-video-tasks:${String(params.shotCount)};final-assembly:${params.renderFinalVideo ? '1' : '0'};price:provider-configured`,
+  }
+}
+
+async function startEditTimelineVideoRun(
+  ctx: ProjectAgentOperationContext,
+  input: z.output<typeof startEditTimelineVideoRunInputSchema>,
+): Promise<z.output<typeof startEditTimelineVideoRunOutputSchema>> {
+  if (input.projectId && input.projectId !== ctx.projectId) {
+    throw new Error(`EDIT_TIMELINE_VIDEO_RUN_PROJECT_MISMATCH:${input.projectId}:${ctx.projectId}`)
+  }
+
+  const story = resolveVideoRunStory(input)
+  const planInput = buildPlanInputFromVideoRun(input, story)
+  const sourceStory = buildPrompt(planInput)
+  const draft = buildDraftTimeline(planInput)
+  const timeline = parseEditTimeline(draft.timeline)
+  assertBlackboardPromptCoverage({ timeline, blackboard: draft.blackboard })
+  const videoModel = await resolveProductionVideoModel({
+    ctx,
+    explicitVideoModel: input.videoModel,
+  })
+  assertProductionVideoModelKey(videoModel)
+  assertProductionFirstLastFrameModelKey(input.firstLastFrameModel)
+
+  const planningWorkflow = buildProjectAgentWorkflowSnapshot({
+    goalText: sourceStory,
+    timeline,
+    agentCrew: draft.agentCrew,
+    blackboard: draft.blackboard,
+    risks: draft.risks,
+    materializeSkillId: 'media-generation',
+    materializeOperationId: 'generate_panel_video',
+    videoModel,
+    generationOptions: input.generationOptions,
+    includeFinalVideoArtifact: true,
+  })
+  writeTimelinePart(ctx, {
+    timeline,
+    sourceStory,
+    creativeBrief: draft.creativeBrief,
+    agentCrew: draft.agentCrew,
+    blackboard: draft.blackboard,
+    unresolvedRefs: [],
+    risks: draft.risks,
+    estimatedTaskCount: timeline.shots.length,
+    workflow: planningWorkflow,
+  })
+
+  const production = await startEditTimelineProductionRun(ctx, {
+    confirmed: true,
+    timeline,
+    blackboard: draft.blackboard,
+    episodeId: input.episodeId,
+    videoModel,
+    firstLastFrameModel: input.firstLastFrameModel,
+    mediaRefs: input.mediaRefs,
+    generationOptions: input.generationOptions,
+    renderFinalVideo: input.renderFinalVideo,
+  }, { operationId: START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID })
+
+  return {
+    ...production,
+    runProfile: {
+      story,
+      aspectRatio: timeline.aspectRatio,
+      targetDurationMs: draft.creativeBrief.targetDurationMs,
+      shotCount: timeline.shots.length,
+      providerProfile: input.providerProfile ?? null,
+      videoModel,
+    },
+    costPreflight: buildVideoRunCostPreflight({
+      shotCount: timeline.shots.length,
+      renderFinalVideo: input.renderFinalVideo ?? true,
+    }),
+    nextRequiredAction: production.planRun.success ? 'monitor_plan_run' : 'inspect_failed_plan_run',
+  }
+}
+
 function writeTimelinePart(ctx: Parameters<ProjectAgentOperationRegistryDraft[string]['execute']>[0], data: EditTimelinePartData): void {
-  writeOperationDataPart<EditTimelinePartData>(ctx.writer, 'data-edit-timeline', data)
+  writeOperationDataPart<EditTimelinePartData>(ctx.writer, 'data-edit-timeline', {
+    ...data,
+    projectId: ctx.projectId,
+    episodeId: ctx.context.episodeId ?? null,
+  })
 }
 
 function collectAffectedShotIds(timeline: ParsedEditTimeline, targetShotId: string): string[] {
@@ -2664,6 +3251,15 @@ function collectAffectedShotIds(timeline: ParsedEditTimeline, targetShotId: stri
   return timeline.shots
     .filter((shot) => affected.has(shot.id))
     .map((shot) => shot.id)
+}
+
+function stableIdToken(value: string): string {
+  const token = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return token || 'manual'
 }
 
 function redoTimelineShot(input: z.output<typeof redoTimelineShotInputSchema>): z.output<typeof redoTimelineShotOutputSchema> {
@@ -2696,6 +3292,8 @@ function redoTimelineShot(input: z.output<typeof redoTimelineShotInputSchema>): 
     ...timeline,
     shots: revisedShots,
   })
+  const revisionToken = stableIdToken(input.sourceTraceId ?? input.redoReason)
+  const revisionId = `shot-revision-${targetShot.id}-${revisionToken}`
   return {
     timeline: revisedTimeline,
     redoPlan: {
@@ -2704,7 +3302,17 @@ function redoTimelineShot(input: z.output<typeof redoTimelineShotInputSchema>): 
       skippedShotIds: timeline.shots
         .map((shot) => shot.id)
         .filter((shotId) => !affectedShotIds.includes(shotId)),
+      revisionId,
       revision,
+      providerTaskPlan: {
+        id: `provider-task-redo-${targetShot.id}-${revisionToken}`,
+        shotId: targetShot.id,
+        operationId: 'generate_panel_video',
+        status: 'planned',
+        revisionId,
+        redoReason: input.redoReason,
+        affectedShotIds,
+      },
     },
   }
 }
@@ -2831,8 +3439,25 @@ export function createEditTimelineOperations(): ProjectAgentOperationRegistryDra
         return result
       },
     }),
+    start_edit_timeline_video_run: defineOperation({
+      id: START_EDIT_TIMELINE_VIDEO_RUN_OPERATION_ID,
+      summary: 'Start the canonical edit-first video run from a natural-language story, then materialize blackboard prompts, submit provider panel videos, and assemble final.video through PlanRun.',
+      intent: 'act',
+      effects: EFFECTS_PRODUCTION_RUN,
+      prerequisites: { episodeId: 'required' },
+      confirmation: {
+        required: true,
+        summary: '将从自然语言故事生成剪辑先行黑板，创建 storyboard/panel，提交真实视频 provider 任务，并在任务完成后组装 final.video；可能消耗额度/产生计费。确认继续后请重新调用并传入 confirmed=true。',
+      },
+      inputSchema: startEditTimelineVideoRunInputSchema,
+      outputSchema: startEditTimelineVideoRunOutputSchema,
+      execute: async (ctx, input) => startEditTimelineVideoRun(
+        ctx,
+        startEditTimelineVideoRunInputSchema.parse(input),
+      ),
+    }),
     start_edit_timeline_production_run: defineOperation({
-      id: 'start_edit_timeline_production_run',
+      id: START_EDIT_TIMELINE_PRODUCTION_RUN_OPERATION_ID,
       summary: 'Materialize exact blackboard prompts into storyboard panels, compile provider video steps, and start the real edit-first PlanRun.',
       intent: 'act',
       effects: EFFECTS_PRODUCTION_RUN,
@@ -2846,6 +3471,7 @@ export function createEditTimelineOperations(): ProjectAgentOperationRegistryDra
       execute: async (ctx, input) => startEditTimelineProductionRun(
         ctx,
         startEditTimelineProductionRunInputSchema.parse(input),
+        { operationId: START_EDIT_TIMELINE_PRODUCTION_RUN_OPERATION_ID },
       ),
     }),
     materialize_edit_timeline_storyboard: defineOperation({
@@ -2878,12 +3504,28 @@ export function createEditTimelineOperations(): ProjectAgentOperationRegistryDra
     }),
     score_edit_timeline_trace: defineOperation({
       id: 'score_edit_timeline_trace',
-      summary: 'Score persisted edit-first PlanRun trace evidence for initial and resume rounds without changing project data.',
+      summary: 'Score persisted edit-first PlanRun trace evidence without changing project data.',
       intent: 'query',
       effects: EFFECTS_NONE,
       inputSchema: scoreEditTimelineTraceInputSchema,
       outputSchema: scoreEditTimelineTraceOutputSchema,
       execute: async (ctx, input) => {
+        if ('planRunId' in input) {
+          const snapshot = await getPlanRunSnapshot(input.planRunId)
+          if (!snapshot || snapshot.planRun.userId !== ctx.userId) {
+            throw new Error(`PLAN_RUN_NOT_FOUND:${input.planRunId}`)
+          }
+          const traceSummary = await getPlanRunTraceSummary({
+            userId: ctx.userId,
+            planRunId: input.planRunId,
+            limit: input.eventLimit,
+          })
+          return scoreEditTimelineSinglePlanRunTrace({
+            planRunId: input.planRunId,
+            snapshot,
+            traceSummary,
+          })
+        }
         const grade = await gradePersistedEditFirstPlanRunTraceRound({
           userId: ctx.userId,
           initialPlanRunId: input.initialPlanRunId,

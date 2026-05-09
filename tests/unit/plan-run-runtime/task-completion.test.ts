@@ -3,6 +3,7 @@ import { resumePlanRunsForTerminalTask } from '@/lib/plan-run-runtime/task-compl
 
 const serviceMock = vi.hoisted(() => ({
   listWaitingPlanStepsByTaskId: vi.fn(),
+  failPlanStep: vi.fn(),
 }))
 
 const resumeMock = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ describe('plan run task completion hook', () => {
       status: 'waiting_task',
       waitingTaskId: 'task-video-2',
     })
+    serviceMock.failPlanStep.mockResolvedValue({})
   })
 
   it('resumes active PlanRuns that are waiting on a completed task', async () => {
@@ -81,5 +83,13 @@ describe('plan run task completion hook', () => {
         errorMessage: 'resume exploded',
       },
     ])
+    expect(serviceMock.failPlanStep).toHaveBeenCalledWith({
+      planRunId: 'plan-run-1',
+      userId: 'user-1',
+      projectId: 'project-1',
+      stepKey: 'shot_01_materialize',
+      errorCode: 'PLAN_RUN_RESUME_FAILED',
+      errorMessage: 'resume exploded',
+    })
   })
 })

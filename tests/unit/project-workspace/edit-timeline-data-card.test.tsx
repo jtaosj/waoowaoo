@@ -291,4 +291,35 @@ describe('workspace assistant edit timeline card', () => {
     expect(html).not.toContain('cards.blackboard.shotScore')
     expect(html).not.toContain('cards.blackboard.finalEvidence')
   })
+
+  it('normalizes signed final video evidence through the project proxy', () => {
+    if (!data.creativeBrief) {
+      throw new Error('TEST_CREATIVE_BRIEF_REQUIRED')
+    }
+    const signedFinalVideoUrl = 'http://localhost:19000/waoowaoo/final-videos/episode-1/editor-final-video.mp4?X-Amz-Signature=signature'
+    const cardData: EditTimelinePartData = {
+      ...data,
+      blackboard: mergeEditTimelineBlackboardRuntimeEvidence(buildEditTimelineBlackboard({
+        timeline: data.timeline,
+        sourceStory: 'A clerk sees tomorrow through a convenience-store camera.',
+        creativeBrief: data.creativeBrief,
+        risks: [],
+      }), {
+        providerTasks: [],
+        finalVideo: {
+          url: signedFinalVideoUrl,
+          evidenceRefs: [signedFinalVideoUrl],
+          score: 91,
+          issues: [],
+        },
+      }),
+    }
+
+    const html = renderToStaticMarkup(<EditTimelineDataCard data={cardData} projectId="project-1" />)
+
+    expect(html).toContain('/api/projects/project-1/video-proxy?key=final-videos%2Fepisode-1%2Feditor-final-video.mp4')
+    expect(html).toContain('final-videos/episode-1/editor-final-video.mp4')
+    expect(html).not.toContain('X-Amz-Signature')
+    expect(html).not.toContain('localhost:19000')
+  })
 })

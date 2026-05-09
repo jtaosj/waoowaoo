@@ -54,7 +54,10 @@ export const GET = apiHandler(async (
     })
   }
 
-  const response = await fetch(fetchUrl)
+  const rangeHeader = request.headers.get('range')
+  const response = rangeHeader
+    ? await fetch(fetchUrl, { headers: { Range: rangeHeader } })
+    : await fetch(fetchUrl)
   if (!response.ok) {
     throw new ApiError('EXTERNAL_ERROR', {
       code: 'VIDEO_PROXY_FETCH_FAILED',
@@ -65,15 +68,20 @@ export const GET = apiHandler(async (
 
   const contentType = response.headers.get('content-type') || 'video/mp4'
   const contentLength = response.headers.get('content-length')
+  const contentRange = response.headers.get('content-range')
+  const acceptRanges = response.headers.get('accept-ranges') || 'bytes'
 
   const headers: HeadersInit = {
     'Content-Type': contentType,
     'Cache-Control': 'no-cache',
+    'Accept-Ranges': acceptRanges,
   }
   if (contentLength) {
     headers['Content-Length'] = contentLength
   }
+  if (contentRange) {
+    headers['Content-Range'] = contentRange
+  }
 
-  return new Response(response.body, { headers })
+  return new Response(response.body, { status: response.status, headers })
 })
-

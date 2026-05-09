@@ -39,6 +39,7 @@ interface UseWorkspaceAssistantRuntimeResult {
   error: Error | undefined
   syncError: string | null
   rawContextStorageError: string | null
+  rawContextReady: boolean
   storageError: string | null
   storageLoading: boolean
   rawContextMessages: UIMessage[]
@@ -74,6 +75,13 @@ export function useWorkspaceAssistantRuntime({
   const assistantThread = useProjectAssistantThread(projectId, episodeId)
   const { save: saveAssistantThread } = useProjectAssistantThreadSync(projectId, episodeId, locale)
   const rawContextMessagesRef = useRef<UIMessage[]>([])
+  const rawContextHydratedStorageKeyRef = useRef<string | null>(null)
+  const [rawContextHydrated, setRawContextHydrated] = useState(false)
+  const rawContextStorageKey = useMemo(() => buildWorkspaceAssistantRawContextStorageKey({
+    projectId,
+    episodeId,
+  }), [episodeId, projectId])
+  const rawContextReady = rawContextHydrated && rawContextHydratedStorageKeyRef.current === rawContextStorageKey
   const contextPayload = useMemo(() => ({
     locale,
     projectId,
@@ -90,19 +98,24 @@ export function useWorkspaceAssistantRuntime({
     body: {
       context: contextPayload,
     },
-    prepareSendMessagesRequest: (options) => ({
-      body: buildWorkspaceAssistantSendRequestBody({
-        baseBody: options.body,
-        context: contextPayload,
-        id: options.id,
-        rawContextMessages: rawContextMessagesRef.current,
-        outgoingMessages: options.messages,
-        trigger: options.trigger,
-        messageId: options.messageId,
-        metadata: options.requestMetadata,
-      }),
-    }),
-  }), [contextPayload, projectId])
+    prepareSendMessagesRequest: (options) => {
+      if (rawContextHydratedStorageKeyRef.current !== rawContextStorageKey) {
+        throw new Error('PROJECT_ASSISTANT_RAW_CONTEXT_NOT_READY')
+      }
+      return {
+        body: buildWorkspaceAssistantSendRequestBody({
+          baseBody: options.body,
+          context: contextPayload,
+          id: options.id,
+          rawContextMessages: rawContextMessagesRef.current,
+          outgoingMessages: options.messages,
+          trigger: options.trigger,
+          messageId: options.messageId,
+          metadata: options.requestMetadata,
+        }),
+      }
+    },
+  }), [contextPayload, projectId, rawContextStorageKey])
   const chat = useChat({
     id: chatId,
     transport,
@@ -115,19 +128,17 @@ export function useWorkspaceAssistantRuntime({
   const [syncError, setSyncError] = useState<string | null>(null)
   const [rawContextMessages, setRawContextMessages] = useState<UIMessage[]>([])
   const [rawContextStorageError, setRawContextStorageError] = useState<string | null>(null)
-  const rawContextStorageKey = useMemo(() => buildWorkspaceAssistantRawContextStorageKey({
-    projectId,
-    episodeId,
-  }), [episodeId, projectId])
-
   const replaceMessages = useCallback((messages: UIMessage[]) => {
     chat.setMessages(messages)
   }, [chat])
 
   const sendMessage = useCallback(async (text: string) => {
+    if (rawContextHydratedStorageKeyRef.current !== rawContextStorageKey) {
+      throw new Error('PROJECT_ASSISTANT_RAW_CONTEXT_NOT_READY')
+    }
     chat.clearError()
     await chat.sendMessage({ text })
-  }, [chat])
+  }, [chat, rawContextStorageKey])
 
   const appendMessages = useCallback((messages: UIMessage[]) => {
     if (messages.length === 0) return
@@ -147,12 +158,16 @@ export function useWorkspaceAssistantRuntime({
   }, [assistantThread.data, assistantThread.isLoading, chat.messages, chatId, replaceMessages])
 
   useEffect(() => {
+    rawContextHydratedStorageKeyRef.current = null
+    setRawContextHydrated(false)
     try {
       const stored = window.localStorage.getItem(rawContextStorageKey)
       if (!stored) {
         rawContextMessagesRef.current = []
         setRawContextMessages([])
         setRawContextStorageError(null)
+        rawContextHydratedStorageKeyRef.current = rawContextStorageKey
+        setRawContextHydrated(true)
         return
       }
       const parsed = JSON.parse(stored) as unknown
@@ -162,14 +177,19 @@ export function useWorkspaceAssistantRuntime({
       rawContextMessagesRef.current = parsed
       setRawContextMessages(parsed)
       setRawContextStorageError(null)
+      rawContextHydratedStorageKeyRef.current = rawContextStorageKey
+      setRawContextHydrated(true)
     } catch (error) {
       rawContextMessagesRef.current = []
       setRawContextMessages([])
       setRawContextStorageError(error instanceof Error ? error.message : String(error))
+      rawContextHydratedStorageKeyRef.current = rawContextStorageKey
+      setRawContextHydrated(true)
     }
   }, [rawContextStorageKey])
 
   useEffect(() => {
+    if (!rawContextReady) return
     if (hydratedSessionKeyRef.current !== chatId) return
     if (chat.messages.length === 0) return
     if (!isPersistableUIMessages(chat.messages)) return
@@ -185,7 +205,7 @@ export function useWorkspaceAssistantRuntime({
     } catch (error) {
       setRawContextStorageError(error instanceof Error ? error.message : String(error))
     }
-  }, [chat.messages, chatId, rawContextStorageKey])
+  }, [chat.messages, chatId, rawContextReady, rawContextStorageKey])
 
   useEffect(() => {
     if (hydratedSessionKeyRef.current !== chatId) return
@@ -237,6 +257,7 @@ export function useWorkspaceAssistantRuntime({
     error: chat.error,
     syncError,
     rawContextStorageError,
+    rawContextReady,
     storageError: assistantThread.error?.message || null,
     storageLoading: assistantThread.isLoading,
     rawContextMessages,

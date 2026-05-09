@@ -8,6 +8,7 @@ import type { WorkspaceCanvasFinalVideo } from '../canvas/final-video'
 interface EpisodeEditorProjectPayload {
   readonly id?: string | null
   readonly outputUrl?: string | null
+  readonly storageKey?: string | null
   readonly renderStatus?: string | null
   readonly updatedAt?: string | Date | null
 }
@@ -28,6 +29,7 @@ function readFinalVideo(editorProject: EpisodeEditorProjectPayload | null | unde
   return {
     editorProjectId: editorProject.id ?? null,
     url: editorProject.outputUrl ?? null,
+    storageKey: editorProject.storageKey ?? null,
     status: editorProject.renderStatus ?? null,
     updatedAt: editorProject.updatedAt instanceof Date
       ? editorProject.updatedAt.toISOString()
