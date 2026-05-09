@@ -61,7 +61,7 @@ export function buildPromptPackageFromContributions(params: {
   const nextBeat = nextBeatContext(params.context)
   const referencePolicy = referencePolicyForContext(params.context)
   const imagePrompt = [
-    `Vertical ${params.context.timeline.aspectRatio} cinematic opening frame for a ${durationSeconds}s silent video shot.`,
+    `Vertical ${params.context.timeline.aspectRatio} cinematic first frame / opening frame for a ${durationSeconds}s silent video shot.`,
     `Subject: ${subject}.`,
     `Opening frame: ${subject} is already visible before the action begins; ${action}`,
     `Scene: ${scene}.`,
@@ -72,7 +72,7 @@ export function buildPromptPackageFromContributions(params: {
     'Single readable still image, subject visible, key prop visible when relevant, no subtitles, no logo, no black screen.',
   ].join('\n')
   const providerPrompt = [
-    `Silent ${params.context.timeline.aspectRatio} cinematic video shot, about ${durationSeconds}s, one single continuous shot.`,
+    `Silent ${params.context.timeline.aspectRatio} cinematic video shot. About ${durationSeconds}s, one single continuous shot.`,
     `Shot purpose: ${shotPurpose}`,
     `Subject: ${subject}.`,
     `Opening frame: ${previousBeat}; ${subject} is visible in ${scene}.`,

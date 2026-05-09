@@ -20,10 +20,10 @@ export function buildScreenplayContribution(
   context: EditTimelineAgentContributionContext,
 ): EditTimelineSegmentScreenplay {
   const rawAction = firstNonEmpty([
-    context.macroSegment.beatGoal,
-    context.shot.editorial?.visual,
     context.shot.goal,
     context.shot.editorial?.story,
+    context.shot.editorial?.visual,
+    context.macroSegment.beatGoal,
   ], `${context.creativeBrief.protagonist} performs the visible story beat for this segment.`)
   const visibleAction = ensureSentence(trimToSentence(avoidSourceRestatement({
     candidate: stripCameraLanguage(rawAction),
