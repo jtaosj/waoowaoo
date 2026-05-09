@@ -14,6 +14,7 @@ import type { ProjectAgentInteractionMode } from '@/lib/project-agent/types'
 import { isPersistableUIMessages } from '@/lib/project-agent/ui-message-validation'
 import {
   buildWorkspaceAssistantRawContextStorageKey,
+  buildWorkspaceAssistantSendRequestBody,
   mergeWorkspaceAssistantRawMessages,
   serializeWorkspaceAssistantRawContext,
 } from './assistant-raw-context'
@@ -72,6 +73,7 @@ export function useWorkspaceAssistantRuntime({
   })
   const assistantThread = useProjectAssistantThread(projectId, episodeId)
   const { save: saveAssistantThread } = useProjectAssistantThreadSync(projectId, episodeId, locale)
+  const rawContextMessagesRef = useRef<UIMessage[]>([])
   const contextPayload = useMemo(() => ({
     locale,
     projectId,
@@ -88,6 +90,18 @@ export function useWorkspaceAssistantRuntime({
     body: {
       context: contextPayload,
     },
+    prepareSendMessagesRequest: (options) => ({
+      body: buildWorkspaceAssistantSendRequestBody({
+        baseBody: options.body,
+        context: contextPayload,
+        id: options.id,
+        rawContextMessages: rawContextMessagesRef.current,
+        outgoingMessages: options.messages,
+        trigger: options.trigger,
+        messageId: options.messageId,
+        metadata: options.requestMetadata,
+      }),
+    }),
   }), [contextPayload, projectId])
   const chat = useChat({
     id: chatId,
@@ -101,7 +115,6 @@ export function useWorkspaceAssistantRuntime({
   const [syncError, setSyncError] = useState<string | null>(null)
   const [rawContextMessages, setRawContextMessages] = useState<UIMessage[]>([])
   const [rawContextStorageError, setRawContextStorageError] = useState<string | null>(null)
-  const rawContextMessagesRef = useRef<UIMessage[]>([])
   const rawContextStorageKey = useMemo(() => buildWorkspaceAssistantRawContextStorageKey({
     projectId,
     episodeId,

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { completeWaitingPlanStepTask, createPlanRun, getPlanRunSnapshot } from '@/lib/plan-run-runtime/service'
+import {
+  completeWaitingPlanStepTask,
+  createPlanRun,
+  getPlanRunSnapshot,
+  getPlanRunTraceSummary,
+  listWaitingPlanStepsByTaskId,
+} from '@/lib/plan-run-runtime/service'
 
 const prismaState = vi.hoisted(() => {
   const tx = {
@@ -227,5 +233,115 @@ describe('plan run runtime service', () => {
     prismaState.tx.planArtifact.findMany.mockResolvedValue([])
 
     await expect(getPlanRunSnapshot('plan-run-1')).rejects.toThrow('PLAN_RUN_STATUS_INVALID:mystery')
+  })
+
+  it('builds an eval-ready trace summary from persisted PlanRun events', async () => {
+    const now = new Date('2026-05-08T01:00:00.000Z')
+    prismaState.tx.planRunEvent.findMany.mockResolvedValue([
+      {
+        id: { toString: () => '11' },
+        planRunId: 'plan-run-1',
+        projectId: 'project-1',
+        userId: 'user-1',
+        seq: 11,
+        eventType: 'step.start',
+        stepKey: 'video',
+        payload: { operationId: 'generate_panel_video' },
+        createdAt: now,
+      },
+      {
+        id: { toString: () => '12' },
+        planRunId: 'plan-run-1',
+        projectId: 'project-1',
+        userId: 'user-1',
+        seq: 12,
+        eventType: 'step.error',
+        stepKey: 'video',
+        payload: {
+          errorCode: 'PLAN_STEP_INPUT_BUILD_FAILED',
+          message: 'EDIT_TIMELINE_GENERATE_PANEL_VIDEO_LAST_FRAME_UNRESOLVED:media:last-frame',
+        },
+        createdAt: now,
+      },
+    ])
+
+    const summary = await getPlanRunTraceSummary({
+      planRunId: 'plan-run-1',
+      userId: 'user-1',
+      afterSeq: 10,
+      limit: 20,
+    })
+
+    expect(prismaState.tx.planRunEvent.findMany).toHaveBeenCalledWith({
+      where: {
+        planRunId: 'plan-run-1',
+        userId: 'user-1',
+        seq: { gt: 10 },
+      },
+      orderBy: { seq: 'asc' },
+      take: 20,
+    })
+    expect(summary.inputBuildFailures).toEqual([
+      {
+        stepKey: 'video',
+        operationId: 'generate_panel_video',
+        errorCode: 'PLAN_STEP_INPUT_BUILD_FAILED',
+        message: 'EDIT_TIMELINE_GENERATE_PANEL_VIDEO_LAST_FRAME_UNRESOLVED:media:last-frame',
+      },
+    ])
+  })
+
+  it('finds active PlanRun steps waiting on a terminal task id', async () => {
+    prismaState.tx.planStepRun.findMany.mockResolvedValue([
+      {
+        planRunId: 'plan-run-1',
+        stepKey: 'shot_01_materialize',
+        status: 'waiting_task',
+        planRun: {
+          userId: 'user-1',
+          projectId: 'project-1',
+          episodeId: 'episode-1',
+          status: 'running',
+        },
+      },
+    ])
+
+    const waitingSteps = await listWaitingPlanStepsByTaskId('task-video-1')
+
+    expect(waitingSteps).toEqual([
+      {
+        planRunId: 'plan-run-1',
+        stepKey: 'shot_01_materialize',
+        status: 'waiting_task',
+        userId: 'user-1',
+        projectId: 'project-1',
+        episodeId: 'episode-1',
+        planRunStatus: 'running',
+      },
+    ])
+    expect(prismaState.tx.planStepRun.findMany).toHaveBeenCalledWith({
+      where: {
+        taskId: 'task-video-1',
+        status: 'waiting_task',
+        planRun: {
+          status: {
+            in: ['queued', 'running'],
+          },
+        },
+      },
+      select: {
+        planRunId: true,
+        stepKey: true,
+        status: true,
+        planRun: {
+          select: {
+            userId: true,
+            projectId: true,
+            episodeId: true,
+            status: true,
+          },
+        },
+      },
+    })
   })
 })

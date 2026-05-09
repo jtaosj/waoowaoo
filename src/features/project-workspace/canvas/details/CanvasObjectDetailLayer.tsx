@@ -304,6 +304,7 @@ export default function CanvasObjectDetailLayer({
       return (
         <FinalDetail
           storyboards={storyboards}
+          finalDetails={selectedNode.data.finalDetails ?? null}
           onGenerateAllVideos={async () => runtime.onGenerateAllVideos()}
           onDownloadVideos={downloadVideos}
         />

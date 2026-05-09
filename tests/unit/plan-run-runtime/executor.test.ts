@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { executeAgentPlan } from '@/lib/plan-run-runtime/executor'
+import { executeAgentPlan, type PlanStepInvoker } from '@/lib/plan-run-runtime/executor'
 
 const serviceMock = vi.hoisted(() => ({
   completePlanRun: vi.fn(async () => ({ planRun: { id: 'plan-run-1' } })),
@@ -128,6 +128,146 @@ describe('plan run executor', () => {
       taskId: 'task-1',
     }))
     expect(serviceMock.completePlanRun).not.toHaveBeenCalled()
+  })
+
+  it('materializes edit-first video control payload before invoking generate_panel_video', async () => {
+    let capturedOperationInput: Record<string, unknown> | null = null
+    const invokeStep = vi.fn(async (params: Parameters<PlanStepInvoker>[0]) => {
+      capturedOperationInput = params.input
+      return {
+        ok: true as const,
+        data: {
+          taskId: 'video-task-1',
+        },
+      }
+    })
+
+    const result = await executeAgentPlan({
+      userId: 'user-1',
+      projectId: 'project-1',
+      input: {
+        goal: 'materialize an edit-first video shot',
+        steps: [
+          {
+            stepKey: 'shot_1_materialize',
+            skillId: 'media-generation',
+            operationId: 'generate_panel_video',
+            input: {
+              editFirst: true,
+              panelId: 'panel-1',
+              videoModel: 'google::veo-3.1-generate-preview',
+              firstLastFrameModel: 'google::veo-3.1-generate-preview',
+              sourceFrameRef: 'media:first-frame',
+              generationOptions: {
+                duration: 5,
+                resolution: '720p',
+                generateAudio: false,
+              },
+              mediaRefs: {
+                'media:last-frame': 'https://cdn.example/terminal-frame.png',
+              },
+              controlPayload: {
+                prompt: 'A precise bridge between two frames.',
+                negativePrompt: 'no blank frame',
+                durationSeconds: 8,
+                aspectRatio: '16:9',
+                firstFrameRef: 'media:first-frame',
+                lastFrameRef: 'media:last-frame',
+                subjectMotion: 'the subject reaches the marked pose',
+              },
+            },
+          },
+        ],
+      },
+      invokeStep,
+    })
+
+    expect(result).toMatchObject({
+      success: true,
+      status: 'waiting_task',
+      waitingTaskId: 'video-task-1',
+    })
+    expect(invokeStep).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'generate_panel_video',
+      input: {
+        confirmed: true,
+        panelId: 'panel-1',
+        videoModel: 'google::veo-3.1-generate-preview',
+        firstLastFrame: {
+          flModel: 'google::veo-3.1-generate-preview',
+          lastFrameImageUrl: 'https://cdn.example/terminal-frame.png',
+          customPrompt: [
+            'A precise bridge between two frames.',
+            'the subject reaches the marked pose',
+          ].join('\n'),
+        },
+        generationOptions: {
+          duration: 5,
+          aspectRatio: '16:9',
+          resolution: '720p',
+          generateAudio: false,
+        },
+      },
+    }))
+    expect(capturedOperationInput).not.toHaveProperty('controlPayload')
+    expect(capturedOperationInput).not.toHaveProperty('mediaRefs')
+    expect(JSON.stringify(capturedOperationInput)).not.toContain('media:last-frame')
+    expect(JSON.stringify(capturedOperationInput)).not.toContain('no blank frame')
+  })
+
+  it('fails the edit-first video step before enqueue when terminal frame refs are unresolved', async () => {
+    const invokeStep = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        taskId: 'video-task-1',
+      },
+    }))
+
+    const result = await executeAgentPlan({
+      userId: 'user-1',
+      projectId: 'project-1',
+      input: {
+        goal: 'reject unresolved edit-first video shot',
+        steps: [
+          {
+            stepKey: 'shot_1_materialize',
+            skillId: 'media-generation',
+            operationId: 'generate_panel_video',
+            input: {
+              editFirst: true,
+              panelId: 'panel-1',
+              videoModel: 'google::veo-3.1-generate-preview',
+              firstLastFrameModel: 'google::veo-3.1-generate-preview',
+              sourceFrameRef: 'media:first-frame',
+              mediaRefs: {},
+              controlPayload: {
+                prompt: 'A precise bridge between two frames.',
+                durationSeconds: 8,
+                aspectRatio: '16:9',
+                firstFrameRef: 'media:first-frame',
+                lastFrameRef: 'media:last-frame',
+              },
+            },
+          },
+        ],
+      },
+      invokeStep,
+    })
+
+    expect(result).toMatchObject({
+      success: false,
+      failedStepKey: 'shot_1_materialize',
+      error: {
+        code: 'PLAN_STEP_INPUT_BUILD_FAILED',
+        message: 'EDIT_TIMELINE_GENERATE_PANEL_VIDEO_LAST_FRAME_UNRESOLVED:media:last-frame',
+      },
+    })
+    expect(invokeStep).not.toHaveBeenCalled()
+    expect(serviceMock.failPlanStep).toHaveBeenCalledWith(expect.objectContaining({
+      stepKey: 'shot_1_materialize',
+      errorCode: 'PLAN_STEP_INPUT_BUILD_FAILED',
+      errorMessage: 'EDIT_TIMELINE_GENERATE_PANEL_VIDEO_LAST_FRAME_UNRESOLVED:media:last-frame',
+    }))
   })
 
   it('passes the active episode context into steps that omit episodeId', async () => {

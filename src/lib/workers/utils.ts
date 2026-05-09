@@ -493,7 +493,7 @@ export async function resolveVideoSourceFromGeneration(
   params: {
     userId: string
     modelId: string
-    imageUrl: string
+    imageUrl?: string
     options?: {
       prompt?: string
       duration?: number
@@ -576,7 +576,7 @@ export async function resolveVideoSourceFromGeneration(
 
   const result = await withLogContext(
     { projectId: job.data.projectId, taskId: job.data.taskId, userId: params.userId },
-    () => generateVideo(params.userId, params.modelId, params.imageUrl, {
+    () => generateVideo(params.userId, params.modelId, params.imageUrl ?? '', {
       ...providerRequestOptions,
       ...providerCapabilityOptions,
     }),

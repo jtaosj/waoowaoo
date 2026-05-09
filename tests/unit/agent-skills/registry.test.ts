@@ -13,6 +13,7 @@ describe('agent skill registry', () => {
     expect(ids).toContain('screenwriting')
     expect(ids).toContain('storyboard-direction')
     expect(ids).toContain('location-selection')
+    expect(ids).toContain('edit-first-video-director')
     expect(ids).not.toContain('story-to-script')
     expect(ids).not.toContain('script-to-storyboard')
   })
@@ -46,6 +47,38 @@ describe('agent skill registry', () => {
 
     expect(skill?.instructions).toContain('Never invent location ids')
     expect(skill?.allowedOperationIds).toContain('confirm_location_selection')
+  })
+
+  it('loads the edit-first video director as a blackboard-first planning and production-bridge skill', () => {
+    const skill = loadAgentSkill('edit-first-video-director')
+
+    expect(skill?.instructions).toContain('EditTimeline')
+    expect(skill?.instructions).toContain('EditTimelineBlackboard')
+    expect(skill?.instructions).toContain('Macro Script')
+    expect(skill?.instructions).toContain('Segment Blackboard')
+    expect(skill?.instructions).toContain('Plain natural language is the expected input')
+    expect(skill?.instructions).toContain('Open-source film-agent learning')
+    expect(skill?.instructions).toContain('Always pass the exact `blackboard`')
+    expect(skill?.allowedOperationIds).toEqual([
+      'create_edit_timeline_plan',
+      'validate_edit_timeline',
+      'compile_edit_timeline',
+      'start_edit_timeline_production_run',
+      'materialize_edit_timeline_storyboard',
+      'assemble_timeline_video',
+      'score_edit_timeline_trace',
+      'redo_timeline_shot',
+    ])
+    expect(skill?.allowedOperationIds).not.toContain('generate_panel_video')
+  })
+
+  it('routes edit-first short-drama goals to the edit-first video director skill first', () => {
+    const results = searchAgentSkills({
+      query: '剪辑先行 短剧 Agent 时间线 EditTimeline 局部重做',
+      limit: 3,
+    })
+
+    expect(results[0]?.id).toBe('edit-first-video-director')
   })
 
   it('loads media generation instructions for direct single-panel video from context model config', () => {

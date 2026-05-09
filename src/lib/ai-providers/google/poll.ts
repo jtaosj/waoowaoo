@@ -1,5 +1,6 @@
 import type { ProviderAsyncTaskStatus } from '@/lib/ai-providers/shared/async-task-status'
 import { logInternal } from '@/lib/logging/semantic'
+import { setProxy } from '../../../../lib/prompts/proxy'
 
 interface UnknownRecord {
   [key: string]: unknown
@@ -34,6 +35,7 @@ export async function queryGeminiBatchStatus(batchName: string, apiKey: string):
   }
 
   try {
+    await setProxy()
     const { GoogleGenAI } = await import('@google/genai')
     const ai = new GoogleGenAI({ apiKey })
     const batchClient = ai as unknown as GeminiBatchClient
@@ -96,6 +98,7 @@ export async function queryGoogleVideoStatus(operationName: string, apiKey: stri
   const logPrefix = '[Veo Query]'
 
   try {
+    await setProxy()
     const { GoogleGenAI, GenerateVideosOperation } = await import('@google/genai')
     const ai = new GoogleGenAI({ apiKey })
     const operation = new GenerateVideosOperation()

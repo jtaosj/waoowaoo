@@ -24,6 +24,7 @@ import { WorkspaceAssistantPanelHeader } from './workspace-assistant/WorkspaceAs
 import { WorkspaceAssistantPanelRail } from './workspace-assistant/WorkspaceAssistantPanelRail'
 import { WorkspaceAssistantRawContextDialog } from './workspace-assistant/WorkspaceAssistantRawContextDialog'
 import {
+  buildWorkspaceAssistantPanelInlineSize,
   buildWorkspaceAssistantPanelLayout,
   clampWorkspaceAssistantPanelWidth,
   WORKSPACE_ASSISTANT_PANEL_WIDTH_PX,
@@ -37,11 +38,13 @@ import {
   readOperationResultSummary,
   readPlanRunSubmittedPartData,
 } from './workspace-assistant/confirmed-operation-result'
+import { extractLatestWorkspaceEditTimelineFromMessages } from './workspace-assistant/workspace-edit-timeline-message-parts'
 import {
   getConfirmationSubmissionBlocker,
   getConfirmationSubmissionBlockerMessageKey,
 } from './workspace-assistant/confirmation-requirements'
 import type { WorkspaceAssistantSelectionContext } from '../canvas/ProjectWorkspaceCanvas'
+import type { EditTimelinePartData } from '@/lib/project-agent/types'
 
 interface WorkspaceAssistantPanelProps {
   projectId: string
@@ -52,6 +55,7 @@ interface WorkspaceAssistantPanelProps {
   onAutoStartConsumed?: () => void
   isCollapsed: boolean
   onToggleCollapsed: () => void
+  onEditTimelineData?: (data: EditTimelinePartData) => void
 }
 
 const WORKSPACE_ASSISTANT_WIDTH_STORAGE_KEY = 'workspace-assistant-panel-width'
@@ -88,6 +92,7 @@ export default function WorkspaceAssistantPanel({
   onAutoStartConsumed,
   isCollapsed,
   onToggleCollapsed,
+  onEditTimelineData,
 }: WorkspaceAssistantPanelProps) {
   const t = useTranslations('assistantAgent')
   const locale = useLocale()
@@ -112,6 +117,17 @@ export default function WorkspaceAssistantPanel({
     interactionMode,
   })
   const { sendMessage } = assistantRuntime
+  const lastPublishedEditTimelineDataRef = useRef<EditTimelinePartData | null>(null)
+  const latestEditTimelineData = useMemo(
+    () => extractLatestWorkspaceEditTimelineFromMessages(assistantRuntime.messages),
+    [assistantRuntime.messages],
+  )
+  useEffect(() => {
+    if (!latestEditTimelineData) return
+    if (lastPublishedEditTimelineDataRef.current === latestEditTimelineData) return
+    lastPublishedEditTimelineDataRef.current = latestEditTimelineData
+    onEditTimelineData?.(latestEditTimelineData)
+  }, [latestEditTimelineData, onEditTimelineData])
   const consumedMessageKeysRef = useRef<Set<string>>(new Set())
   const sendAssistantMessageOnce = useCallback(async (key: string, message: string) => {
     const normalizedKey = key.trim()
@@ -348,7 +364,7 @@ export default function WorkspaceAssistantPanel({
         className={`pointer-events-auto fixed right-4 z-20 overflow-hidden rounded-[34px] border border-white/80 bg-white/82 ring-1 ring-[var(--glass-stroke-base)]/70 backdrop-blur-2xl ${isResizing ? '' : 'transition-[width] duration-300 ease-out'}`}
         style={{
           top: WORKSPACE_ASSISTANT_TOP_OFFSET,
-          width: `${layout.panelWidthPx}px`,
+          width: buildWorkspaceAssistantPanelInlineSize(layout.panelWidthPx),
           height: `calc(100vh - ${WORKSPACE_ASSISTANT_TOP_OFFSET} - 1.5rem)`,
         }}
         data-state={layout.state}

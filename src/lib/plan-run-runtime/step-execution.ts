@@ -1,3 +1,5 @@
+import { buildGeneratePanelVideoInputFromEditFirstStepInput } from '@/lib/edit-timeline/operation-input'
+
 export type JsonRecord = Record<string, unknown>
 
 export interface ExecutablePlanStep {
@@ -17,6 +19,8 @@ const EPISODE_CONTEXT_OPERATION_IDS = new Set([
   'generate_voice_line_audio',
   'generate_episode_voice_audio',
   'generate_episode_videos',
+  'materialize_edit_timeline_storyboard',
+  'assemble_timeline_video',
 ])
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -62,9 +66,21 @@ export function extractTaskId(result: unknown): string | null {
 export function artifactRefId(params: {
   stepKey: string
   taskId: string | null
+  artifactType?: string | null
   output: JsonRecord
 }): string {
-  return readString(params.output.mediaId)
+  if (params.artifactType === 'final.video') {
+    return readString(params.output.storageKey)
+      || readString(params.output.finalVideoUrl)
+      || readString(params.output.outputUrl)
+      || readString(params.output.editorProjectId)
+      || params.taskId
+      || params.stepKey
+  }
+  return readString(params.output.finalVideoUrl)
+    || readString(params.output.outputUrl)
+    || readString(params.output.editorProjectId)
+    || readString(params.output.mediaId)
     || readString(params.output.imageMediaId)
     || readString(params.output.videoMediaId)
     || readString(params.output.audioMediaId)
@@ -73,6 +89,12 @@ export function artifactRefId(params: {
     || readString(params.output.assetId)
     || params.taskId
     || params.stepKey
+}
+
+export function inputBuildErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message.trim() || 'PLAN_STEP_INPUT_BUILD_FAILED'
+  if (typeof error === 'string' && error.trim()) return error.trim()
+  return 'PLAN_STEP_INPUT_BUILD_FAILED'
 }
 
 export function findRunnableExecutableStep(params: {
@@ -92,6 +114,15 @@ export function buildOperationInput(params: {
   episodeId?: string | null
 }): JsonRecord {
   const input = { ...(params.step.input ?? {}) }
+  if (params.step.operationId === 'generate_panel_video' && input.editFirst === true) {
+    const operationInput: JsonRecord = {
+      ...buildGeneratePanelVideoInputFromEditFirstStepInput(input),
+    }
+    return {
+      ...operationInput,
+      confirmed: true,
+    }
+  }
   const episodeId = readString(params.episodeId)
   if (
     episodeId

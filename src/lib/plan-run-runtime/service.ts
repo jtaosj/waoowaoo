@@ -9,6 +9,7 @@ import {
   type PlanRunStatus,
   type PlanStepStatus,
 } from './types'
+import { buildPlanRunTraceSummary } from './trace-summary'
 
 type JsonRecord = Record<string, unknown>
 
@@ -99,7 +100,7 @@ type PlanStepRunModel = {
   upsert: (args: unknown) => Promise<PlanStepRunRow>
   update: (args: unknown) => Promise<PlanStepRunRow>
   updateMany: (args: unknown) => Promise<{ count: number }>
-  findMany: (args: unknown) => Promise<PlanStepRunRow[]>
+  findMany: <TRow = PlanStepRunRow>(args: unknown) => Promise<TRow[]>
   findUnique: (args: unknown) => Promise<PlanStepRunRow | null>
 }
 
@@ -544,6 +545,63 @@ export async function getPlanRunSnapshot(planRunId: string) {
   }
 }
 
+type WaitingPlanStepForTaskRow = {
+  planRunId: string
+  stepKey: string
+  status: string
+  planRun: {
+    userId: string
+    projectId: string
+    episodeId: string | null
+    status: string
+  }
+}
+
+export async function listWaitingPlanStepsByTaskId(taskId: string) {
+  const rows = await runtimeClient.planStepRun.findMany<WaitingPlanStepForTaskRow>({
+    where: {
+      taskId,
+      status: PLAN_STEP_STATUS.WAITING_TASK,
+      planRun: {
+        status: {
+          in: [
+            PLAN_RUN_STATUS.QUEUED,
+            PLAN_RUN_STATUS.RUNNING,
+          ],
+        },
+      },
+    },
+    select: {
+      planRunId: true,
+      stepKey: true,
+      status: true,
+      planRun: {
+        select: {
+          userId: true,
+          projectId: true,
+          episodeId: true,
+          status: true,
+        },
+      },
+    },
+  })
+
+  return rows.map((row) => {
+    if (row.status !== PLAN_STEP_STATUS.WAITING_TASK) {
+      throw new Error(`PLAN_STEP_STATUS_INVALID:${row.status}`)
+    }
+    return {
+      planRunId: row.planRunId,
+      stepKey: row.stepKey,
+      status: PLAN_STEP_STATUS.WAITING_TASK,
+      userId: row.planRun.userId,
+      projectId: row.planRun.projectId,
+      episodeId: row.planRun.episodeId,
+      planRunStatus: asPlanRunStatus(row.planRun.status),
+    }
+  })
+}
+
 export async function appendPlanRunEventWithSeq(input: PlanRunEventInput) {
   return await runtimeClient.$transaction(async (tx) => {
     const run = await tx.planRun.update({
@@ -609,6 +667,16 @@ export async function listPlanRunEventsAfterSeq(params: {
     take: params.limit ?? 200,
   })
   return rows.map(mapPlanEvent)
+}
+
+export async function getPlanRunTraceSummary(params: {
+  planRunId: string
+  userId: string
+  afterSeq?: number
+  limit?: number
+}) {
+  const events = await listPlanRunEventsAfterSeq(params)
+  return buildPlanRunTraceSummary(events)
 }
 
 export async function requestPlanRunCancel(params: {

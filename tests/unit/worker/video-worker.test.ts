@@ -55,6 +55,8 @@ const prismaMock = vi.hoisted(() => ({
   },
 }))
 
+const normalizeToBase64ForGenerationMock = vi.hoisted(() => vi.fn(async (input: string) => input))
+
 vi.mock('bullmq', () => ({
   Queue: class {
     constructor(name: string) {
@@ -85,7 +87,7 @@ vi.mock('@/lib/workers/shared', () => ({
 vi.mock('@/lib/workers/utils', () => utilsMock)
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
 vi.mock('@/lib/media/outbound-image', () => ({
-  normalizeToBase64ForGeneration: vi.fn(async (input: string) => input),
+  normalizeToBase64ForGeneration: normalizeToBase64ForGenerationMock,
 }))
 vi.mock('@/lib/ai-registry/capabilities-catalog', () => ({
   resolveBuiltinCapabilitiesByModelKey: vi.fn(() => ({ video: { firstlastframe: true } })),
@@ -138,6 +140,7 @@ describe('worker video processor behavior', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
     workerState.processor = null
+    normalizeToBase64ForGenerationMock.mockImplementation(async (input: string) => input)
 
     prismaMock.projectPanel.findUnique.mockResolvedValue(buildPanel())
     prismaMock.projectPanel.findFirst.mockResolvedValue(buildPanel())
@@ -268,6 +271,121 @@ describe('worker video processor behavior', () => {
         },
       },
     })
+  })
+
+  it('VIDEO_PANEL: text-to-video panel without imageUrl still submits prompt-bound provider task', async () => {
+    const processor = workerState.processor
+    expect(processor).toBeTruthy()
+
+    prismaMock.projectPanel.findUnique.mockResolvedValueOnce(buildPanel({
+      imageUrl: null,
+      videoPrompt: 'text only shot prompt',
+      description: 'fallback description',
+    }))
+
+    const job = buildJob({
+      type: TASK_TYPE.VIDEO_PANEL,
+      payload: {
+        videoModel: 'ark::doubao-seedance-2-0-260128',
+        generationOptions: {
+          duration: 5,
+          resolution: '720p',
+          generateAudio: true,
+        },
+      },
+    })
+
+    await processor!(job)
+
+    expect(utilsMock.toSignedUrlIfCos).not.toHaveBeenCalledWith(null, expect.anything())
+    expect(normalizeToBase64ForGenerationMock).not.toHaveBeenCalled()
+    expect(utilsMock.resolveVideoSourceFromGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-1',
+        modelId: 'ark::doubao-seedance-2-0-260128',
+        options: expect.objectContaining({
+          prompt: 'text only shot prompt',
+          aspectRatio: '16:9',
+          duration: 5,
+          resolution: '720p',
+          generateAudio: true,
+          generationMode: 'normal',
+        }),
+      }),
+    )
+    expect(utilsMock.resolveVideoSourceFromGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        imageUrl: expect.any(String),
+      }),
+    )
+  })
+
+  it('VIDEO_PANEL: first-last-frame without source image fails explicitly', async () => {
+    const processor = workerState.processor
+    expect(processor).toBeTruthy()
+
+    prismaMock.projectPanel.findUnique.mockResolvedValueOnce(buildPanel({
+      imageUrl: null,
+      videoPrompt: 'first-last-frame prompt',
+    }))
+
+    const job = buildJob({
+      type: TASK_TYPE.VIDEO_PANEL,
+      payload: {
+        videoModel: 'fal::normal-video-model',
+        firstLastFrame: {
+          flModel: 'fal::first-last-video-model',
+          lastFrameImageUrl: 'https://direct.example/last.png',
+        },
+      },
+    })
+
+    await expect(processor!(job)).rejects.toThrow('VIDEO_FIRSTLASTFRAME_SOURCE_IMAGE_REQUIRED')
+  })
+
+  it('VIDEO_PANEL: first-last-frame direct lastFrameImageUrl is normalized and sent to the provider payload', async () => {
+    const processor = workerState.processor
+    expect(processor).toBeTruthy()
+
+    normalizeToBase64ForGenerationMock.mockImplementation(async (input: string) => `normalized:${input}`)
+
+    const job = buildJob({
+      type: TASK_TYPE.VIDEO_PANEL,
+      payload: {
+        videoModel: 'fal::normal-video-model',
+        firstLastFrame: {
+          flModel: 'fal::first-last-video-model',
+          lastFrameImageUrl: 'https://direct.example/last.png',
+          customPrompt: 'bridge the exact motion between frames',
+        },
+        generationOptions: {
+          duration: 8,
+          resolution: '720p',
+        },
+      },
+    })
+
+    await processor!(job)
+
+    expect(normalizeToBase64ForGenerationMock).toHaveBeenCalledWith('https://direct.example/last.png')
+    expect(utilsMock.resolveVideoSourceFromGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-1',
+        modelId: 'fal::first-last-video-model',
+        imageUrl: 'normalized:https://signed.example/cos/panel-image.png',
+        options: expect.objectContaining({
+          prompt: 'bridge the exact motion between frames',
+          aspectRatio: '16:9',
+          duration: 8,
+          resolution: '720p',
+          generationMode: 'firstlastframe',
+          lastFrameImageUrl: 'normalized:https://direct.example/last.png',
+        }),
+      }),
+    )
   })
 
   it('LIP_SYNC: 缺少 panel 时显式失败', async () => {

@@ -17,6 +17,7 @@ import { useTranslations } from 'next-intl'
 import { AppIcon } from '@/components/ui/icons'
 import type { UpsertCanvasLayoutInput } from '@/lib/project-canvas/layout/canvas-layout-contract'
 import type { CanvasNodeLayout } from '@/lib/project-canvas/layout/canvas-layout.types'
+import type { EditTimelinePartData } from '@/lib/project-agent/types'
 import { useWorkspaceEpisodeStageData } from '../hooks/useWorkspaceEpisodeStageData'
 import { useWorkspaceProvider } from '../WorkspaceProvider'
 import { useCanvasLayoutPersistence } from './hooks/useCanvasLayoutPersistence'
@@ -31,7 +32,12 @@ import {
 } from './hooks/canvas-projection-signature'
 import { workspaceNodeTypes } from './nodes/workspaceNodeTypes'
 import CanvasObjectDetailLayer from './details/CanvasObjectDetailLayer'
-import type { WorkspaceCanvasFlowEdge, WorkspaceCanvasFlowNode, WorkspaceCanvasNodeAction } from './node-canvas-types'
+import type {
+  WorkspaceCanvasFlowEdge,
+  WorkspaceCanvasFlowNode,
+  WorkspaceCanvasNodeAction,
+  WorkspaceCanvasNodeKind,
+} from './node-canvas-types'
 
 const DEFAULT_VIEWPORT = { x: 24, y: 136, zoom: 0.82 }
 const EMPTY_SAVED_NODE_LAYOUTS: readonly CanvasNodeLayout[] = []
@@ -45,6 +51,7 @@ export interface WorkspaceAssistantSelectionContext {
 }
 
 interface ProjectWorkspaceCanvasContentProps {
+  readonly editTimelineData?: EditTimelinePartData | null
   onAssistantSelectionChange?: (selection: WorkspaceAssistantSelectionContext) => void
 }
 
@@ -113,10 +120,18 @@ function CanvasViewportControls({
   )
 }
 
-function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWorkspaceCanvasContentProps) {
+function canOpenNodeDetail(kind: WorkspaceCanvasNodeKind): boolean {
+  return kind === 'scriptClip'
+    || kind === 'shot'
+    || kind === 'imageAsset'
+    || kind === 'videoClip'
+    || kind === 'finalTimeline'
+}
+
+function ProjectWorkspaceCanvasContent({ editTimelineData = null, onAssistantSelectionChange }: ProjectWorkspaceCanvasContentProps) {
   const t = useTranslations('projectWorkflow.canvas.workspace')
   const { projectId, episodeId } = useWorkspaceProvider()
-  const { episodeName, novelText, clips, storyboards, shots } = useWorkspaceEpisodeStageData()
+  const { episodeName, novelText, clips, storyboards, shots, finalVideo } = useWorkspaceEpisodeStageData()
   const reactFlow = useReactFlow<WorkspaceCanvasFlowNode>()
   const runNodeAction = useWorkspaceNodeCanvasActions()
   const [nodes, setNodes] = useState<WorkspaceCanvasFlowNode[]>([])
@@ -153,6 +168,8 @@ function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWo
     clips,
     storyboards,
     shots,
+    editTimelineData,
+    finalVideo,
     savedLayouts: savedNodeLayouts,
     translate: t,
     onAction: onNodeAction,
@@ -215,7 +232,7 @@ function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWo
   }, [])
 
   const handleNodeClick = useCallback<NodeMouseHandler<WorkspaceCanvasFlowNode>>((_event, node) => {
-    if (node.data.kind === 'analysis' || node.data.kind === 'storyInput') return
+    if (!canOpenNodeDetail(node.data.kind)) return
     setSelectedNodeId(node.id)
   }, [])
 
@@ -229,6 +246,8 @@ function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWo
       clips,
       storyboards,
       shots,
+      editTimelineData,
+      finalVideo,
       savedLayouts: EMPTY_SAVED_NODE_LAYOUTS,
       translate: t,
       onAction: onNodeAction,
@@ -236,7 +255,7 @@ function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWo
     setNodes([...defaultProjection.nodes])
     void reactFlow.setViewport(DEFAULT_VIEWPORT)
     void resetSavedLayout()
-  }, [clips, episodeId, episodeName, novelText, onNodeAction, projectId, reactFlow, resetSavedLayout, shots, storyboards, t])
+  }, [clips, editTimelineData, episodeId, episodeName, finalVideo, novelText, onNodeAction, projectId, reactFlow, resetSavedLayout, shots, storyboards, t])
 
   const fitView = useCallback(() => {
     void reactFlow.fitView({ padding: 0.14, duration: 180 })
@@ -343,13 +362,17 @@ function ProjectWorkspaceCanvasContent({ onAssistantSelectionChange }: ProjectWo
 }
 
 interface ProjectWorkspaceCanvasProps {
+  readonly editTimelineData?: EditTimelinePartData | null
   onAssistantSelectionChange?: (selection: WorkspaceAssistantSelectionContext) => void
 }
 
-export default function ProjectWorkspaceCanvas({ onAssistantSelectionChange }: ProjectWorkspaceCanvasProps) {
+export default function ProjectWorkspaceCanvas({ editTimelineData = null, onAssistantSelectionChange }: ProjectWorkspaceCanvasProps) {
   return (
     <ReactFlowProvider>
-      <ProjectWorkspaceCanvasContent onAssistantSelectionChange={onAssistantSelectionChange} />
+      <ProjectWorkspaceCanvasContent
+        editTimelineData={editTimelineData}
+        onAssistantSelectionChange={onAssistantSelectionChange}
+      />
     </ReactFlowProvider>
   )
 }

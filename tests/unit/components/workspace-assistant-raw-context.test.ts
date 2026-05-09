@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { UIMessage } from 'ai'
 import {
   buildWorkspaceAssistantRawContextStorageKey,
+  buildWorkspaceAssistantRequestMessages,
+  buildWorkspaceAssistantSendRequestBody,
   extractWorkspaceAssistantRuntimeContexts,
   mergeWorkspaceAssistantRawMessages,
   serializeWorkspaceAssistantDialogue,
@@ -54,6 +56,116 @@ describe('workspace assistant raw context helpers', () => {
     const merged = mergeWorkspaceAssistantRawMessages({ current, incoming })
 
     expect(merged.map((message) => message.id)).toEqual(['user-1', 'assistant-1', 'user-2'])
+  })
+
+  it('keeps raw edit-first data parts when sending a short generation confirmation', () => {
+    const editTimelineMessage: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: {
+              title: 'Generic timeline',
+              aspectRatio: '9:16',
+              segments: [],
+              shots: [{ id: 'shot-1', title: 'Opening', durationSec: 3 }],
+              references: [],
+              metadata: {},
+            },
+            agentCrew: {
+              director: {
+                agentId: 'main-director',
+                role: 'main-director',
+                title: 'Project Agent',
+                mission: 'Plan the creative task.',
+                summary: 'Ready to compile generation tasks.',
+                shotIds: ['shot-1'],
+                outputs: [],
+                status: 'drafted',
+              },
+              subagents: [],
+              synthesis: 'Compile confirmed timeline into provider work.',
+            },
+            unresolvedRefs: [],
+            risks: [],
+            estimatedTaskCount: 1,
+          },
+        },
+      ],
+    }
+    const outgoingMessages = [
+      buildMessage({ id: 'user-confirm', role: 'user', text: '生成视频' }),
+    ]
+
+    const merged = buildWorkspaceAssistantRequestMessages({
+      rawContextMessages: [editTimelineMessage],
+      outgoingMessages,
+    })
+
+    expect(merged.map((message) => message.id)).toEqual(['assistant-edit-timeline', 'user-confirm'])
+    expect(merged[0]?.parts[0]?.type).toBe('data-edit-timeline')
+  })
+
+  it('builds assistant send requests with explicit context and raw edit-first timeline messages', () => {
+    const editTimelineMessage: UIMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            operationId: 'create_edit_timeline_plan',
+            timeline: {
+              id: 'timeline-1',
+              title: 'Generic timeline',
+              aspectRatio: '9:16',
+              fps: 24,
+              segments: [],
+              shots: [],
+              references: [],
+              continuityBible: {},
+            },
+            unresolvedRefs: [],
+            risks: [],
+            estimatedTaskCount: 1,
+          },
+        },
+      ],
+    }
+    const outgoingMessages = [
+      buildMessage({ id: 'user-confirm', role: 'user', text: '生成视频' }),
+    ]
+
+    const body = buildWorkspaceAssistantSendRequestBody({
+      baseBody: { context: { stale: true } },
+      context: {
+        locale: 'zh',
+        projectId: 'project-1',
+        episodeId: 'episode-1',
+        interactionMode: 'auto',
+      },
+      id: 'chat-1',
+      rawContextMessages: [editTimelineMessage],
+      outgoingMessages,
+      trigger: 'submit-message',
+      messageId: 'user-confirm',
+      metadata: { source: 'test' },
+    })
+
+    expect(body.context).toEqual({
+      locale: 'zh',
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      interactionMode: 'auto',
+    })
+    expect(body.episodeId).toBe('episode-1')
+    expect(body.messages).toEqual([editTimelineMessage, outgoingMessages[0]])
+    expect(body.trigger).toBe('submit-message')
+    expect(body.messageId).toBe('user-confirm')
+    expect(body.metadata).toEqual({ source: 'test' })
   })
 
   it('serializes raw messages as readable JSON for the debug window', () => {

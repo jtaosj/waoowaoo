@@ -147,6 +147,330 @@ function extractConversationExcerpt(messages: UIMessage[]): string {
     .join('\n')
 }
 
+const EDIT_FIRST_ROUTE_MARKERS = [
+  'edit-first-video-director',
+  'create_edit_timeline_plan',
+  'validate_edit_timeline',
+  'compile_edit_timeline',
+  'score_edit_timeline_trace',
+  'redo_timeline_shot',
+  'edittimeline',
+  'edit timeline',
+  '剪辑先行',
+  '剪辑时间线',
+  '时间线剪辑',
+] as const
+
+const NATURAL_STORY_VIDEO_PRODUCTION_MARKERS = [
+  '生成',
+  '生产',
+  '做',
+  '帮我生成',
+  '生成一段',
+  '生成一个',
+  '做一段',
+  '做一个',
+  '做成',
+  '拍成',
+  '拍出来',
+  '拍一段',
+  '拍一个',
+  '剪成',
+  '剪一段',
+  '剪一个',
+  '出一个',
+  '出一段',
+  '制作',
+  '创作',
+  '输出',
+  '变成',
+  'create',
+  'generate',
+  'make',
+  'produce',
+  'turn into',
+  'film',
+  'shoot',
+] as const
+
+const NATURAL_STORY_VIDEO_OUTPUT_MARKERS = [
+  '竖屏短片',
+  '影片',
+  '片子',
+  '电影',
+  '短动画',
+  '短剧',
+  '动画',
+  '视频',
+  '短片',
+  '镜头',
+  '画面',
+  '分镜',
+  'short animation',
+  'short drama',
+  'short film',
+  'animation',
+  'video',
+  'clip',
+] as const
+
+const NATURAL_STORY_CONTENT_MARKERS = [
+  '故事',
+  '剧情',
+  '主角',
+  '人物',
+  '他',
+  '她',
+  '男人',
+  '女人',
+  '老人',
+  '孩子',
+  '女子',
+  '高中生',
+  '学生',
+  '男孩',
+  '女孩',
+  '清洁工',
+  '雨夜',
+  '便利店',
+  '地铁',
+  '末班车',
+  '车厢',
+  '窗外',
+  '门口',
+  '怀表',
+  '相机',
+  '捡到',
+  '照片',
+  '发现',
+  '看见',
+  '抬头',
+  '突然',
+  '却',
+  '未来',
+  '年轻时',
+  '十分钟后',
+  '悬疑',
+  '反转',
+  'story',
+  'plot',
+  'character',
+  'protagonist',
+  'discovers',
+  'finds',
+  'sees',
+  'future',
+  'twist',
+] as const
+
+const EDIT_FIRST_CREATIVE_PLANNING_MARKERS = [
+  '计划',
+  '设计',
+  '规划',
+  '草案',
+  '方案',
+  '想法',
+  '先帮我',
+  '给我一个',
+  '帮我想',
+  'plan',
+  'design',
+  'draft',
+  'outline',
+] as const
+
+const EDIT_FIRST_CREATIVE_STYLE_MARKERS = [
+  '风格',
+  '恐怖',
+  '悬疑',
+  '喜剧',
+  '科幻',
+  '电影感',
+  '希区柯克',
+  '赛博',
+  ' noir',
+  'cinematic',
+  'horror',
+  'suspense',
+  'thriller',
+  'comedy',
+  'sci-fi',
+] as const
+
+const NON_EDIT_FIRST_OPERATIONAL_MARKERS = [
+  '为什么失败',
+  '失败了',
+  '报错',
+  '错误',
+  '任务状态',
+  '任务进度',
+  '生成状态',
+  '下载',
+  '配置',
+  '账单',
+  '花费',
+  '多少钱',
+  '余额',
+  '额度',
+  '登录',
+  '开通',
+  'api key',
+  'failed',
+  'failure',
+  'error',
+  'status',
+  'progress',
+  'download',
+  'config',
+  'billing',
+  'quota',
+  'login',
+] as const
+
+const EDIT_FIRST_VIDEO_CONTINUATION_MARKERS = [
+  '生成视频',
+  '生成视屏',
+  '生产视频',
+  '生产视屏',
+  '做视频',
+  '做成视频',
+  '生成影片',
+  '执行生成',
+  '开始生成',
+  '提交生成',
+  '确认生成',
+  '生成真实视频',
+  '全量生成',
+  '生成全部',
+  '生成所有镜头',
+  '提交任务',
+  '执行任务',
+  'generate video',
+  'start generation',
+  'submit generation',
+  'execute generation',
+  'run generation',
+  'generate all shots',
+  'render video',
+] as const
+
+const EDIT_FIRST_CONTEXT_DATA_PART_TYPES = [
+  'data-edit-timeline',
+] as const
+
+const EDIT_FIRST_CONTEXT_TEXT_MARKERS = [
+  ...EDIT_FIRST_ROUTE_MARKERS,
+  'agentcrew',
+  'agent crew',
+  'confirmation summary',
+  '确认摘要',
+  '预计执行任务数',
+  'provider task',
+  'provider 任务',
+] as const
+
+function includesAnyMarkerOrCompact(text: string, markers: readonly string[]): boolean {
+  const normalized = text.toLowerCase()
+  const compact = normalized.replace(/[\s_-]+/g, '')
+  return markers.some((marker) => {
+    const normalizedMarker = marker.toLowerCase()
+    return normalized.includes(normalizedMarker) || compact.includes(normalizedMarker.replace(/[\s_-]+/g, ''))
+  })
+}
+
+function isExplicitEditFirstTimelineRequest(latestUserText: string): boolean {
+  return includesAnyMarkerOrCompact(latestUserText, EDIT_FIRST_ROUTE_MARKERS)
+}
+
+function includesAnyMarker(text: string, markers: readonly string[]): boolean {
+  return markers.some((marker) => text.includes(marker.toLowerCase()))
+}
+
+function countMarkers(text: string, markers: readonly string[]): number {
+  let count = 0
+  for (const marker of markers) {
+    if (text.includes(marker.toLowerCase())) count += 1
+  }
+  return count
+}
+
+function countNarrativeBoundaries(text: string): number {
+  const matches = text.match(/[.!?。！？；;，,]/g)
+  return matches?.length ?? 0
+}
+
+function isNaturalStoryVideoGenerationRequest(latestUserText: string): boolean {
+  const normalized = latestUserText.toLowerCase()
+  const hasProductionIntent = includesAnyMarker(normalized, NATURAL_STORY_VIDEO_PRODUCTION_MARKERS)
+  const hasVideoOutputIntent = includesAnyMarker(normalized, NATURAL_STORY_VIDEO_OUTPUT_MARKERS)
+  const storySignalCount = countMarkers(normalized, NATURAL_STORY_CONTENT_MARKERS)
+  if (hasProductionIntent && hasVideoOutputIntent && storySignalCount >= 2) return true
+
+  const compactLength = normalized.replace(/\s+/g, '').length
+  const narrativeBoundaryCount = countNarrativeBoundaries(normalized)
+  return compactLength >= 45 && narrativeBoundaryCount >= 3 && storySignalCount >= 4
+}
+
+function isForcedEditFirstCreativeDefaultRequest(latestUserText: string): boolean {
+  const normalized = latestUserText.toLowerCase()
+  if (includesAnyMarkerOrCompact(normalized, NON_EDIT_FIRST_OPERATIONAL_MARKERS)) return false
+
+  const hasVideoOutputIntent = includesAnyMarker(normalized, NATURAL_STORY_VIDEO_OUTPUT_MARKERS)
+  if (!hasVideoOutputIntent) return false
+
+  const hasProductionIntent = includesAnyMarker(normalized, NATURAL_STORY_VIDEO_PRODUCTION_MARKERS)
+  const hasPlanningIntent = includesAnyMarkerOrCompact(normalized, EDIT_FIRST_CREATIVE_PLANNING_MARKERS)
+  const hasCreativeStyleIntent = includesAnyMarker(normalized, EDIT_FIRST_CREATIVE_STYLE_MARKERS)
+  const storySignalCount = countMarkers(normalized, NATURAL_STORY_CONTENT_MARKERS)
+
+  return hasProductionIntent || hasPlanningIntent || hasCreativeStyleIntent || storySignalCount > 0
+}
+
+function hasEditFirstTimelineContext(messages: UIMessage[]): boolean {
+  return messages.slice(-8).some((message) => {
+    return message.parts.some((part) => {
+      if (!isRecord(part)) return false
+      if (
+        typeof part.type === 'string'
+        && EDIT_FIRST_CONTEXT_DATA_PART_TYPES.some((type) => type === part.type)
+      ) {
+        return true
+      }
+      if (part.type !== 'text' || typeof part.text !== 'string') return false
+      return includesAnyMarkerOrCompact(part.text, EDIT_FIRST_CONTEXT_TEXT_MARKERS)
+    })
+  })
+}
+
+function isEditFirstVideoContinuationRequest(latestUserText: string, messages: UIMessage[]): boolean {
+  if (!hasEditFirstTimelineContext(messages)) return false
+  return includesAnyMarkerOrCompact(latestUserText, EDIT_FIRST_VIDEO_CONTINUATION_MARKERS)
+}
+
+function buildDeterministicEditFirstRoute(params: {
+  latestUserText: string
+  allowedRequestedGroups: string[][]
+  intent: ProjectAgentIntent
+  reasoningTag: string
+}): ProjectAgentRouteDecision {
+  const reasoning = [params.reasoningTag]
+  const requestedGroups = filterRequestedGroups({
+    requestedGroups: [['skill']],
+    allowedRequestedGroups: params.allowedRequestedGroups,
+    reasoning,
+  })
+
+  return {
+    intent: params.intent,
+    domains: ['skill'],
+    requestedGroups,
+    needsClarification: false,
+    clarifyingQuestion: null,
+    reasoning,
+    latestUserText: params.latestUserText,
+  }
+}
+
 function buildPhaseSummary(phase: ProjectPhaseSnapshot): string {
   return [
     `phase=${phase.phase}`,
@@ -251,6 +575,42 @@ export async function routeProjectAgentRequest(input: {
       reasoning: ['router:empty-user-text'],
       latestUserText,
     }
+  }
+
+  if (isExplicitEditFirstTimelineRequest(latestUserText)) {
+    return buildDeterministicEditFirstRoute({
+      latestUserText,
+      allowedRequestedGroups: input.allowedRequestedGroups,
+      intent: 'plan',
+      reasoningTag: 'router:deterministic-edit-first-video-director',
+    })
+  }
+
+  if (isNaturalStoryVideoGenerationRequest(latestUserText)) {
+    return buildDeterministicEditFirstRoute({
+      latestUserText,
+      allowedRequestedGroups: input.allowedRequestedGroups,
+      intent: 'act',
+      reasoningTag: 'router:deterministic-natural-story-video',
+    })
+  }
+
+  if (isEditFirstVideoContinuationRequest(latestUserText, input.messages)) {
+    return buildDeterministicEditFirstRoute({
+      latestUserText,
+      allowedRequestedGroups: input.allowedRequestedGroups,
+      intent: 'act',
+      reasoningTag: 'router:deterministic-edit-first-video-continuation',
+    })
+  }
+
+  if (isForcedEditFirstCreativeDefaultRequest(latestUserText)) {
+    return buildDeterministicEditFirstRoute({
+      latestUserText,
+      allowedRequestedGroups: input.allowedRequestedGroups,
+      intent: 'plan',
+      reasoningTag: 'router:deterministic-edit-first-creative-default',
+    })
   }
 
   const locale = normalizeProjectAgentLocale(input.context.locale)

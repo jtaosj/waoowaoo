@@ -73,6 +73,21 @@ function resolveVideoGenerationMode(payload: unknown): 'normal' | 'firstlastfram
   return isRecord(payload.firstLastFrame) ? 'firstlastframe' : 'normal'
 }
 
+function hasFirstLastFrameLastFrameSource(input: UnknownObject): boolean {
+  if (normalizeString(input.lastFrameImageUrl)) return true
+
+  const storyboardId = normalizeString(input.lastFrameStoryboardId)
+  const rawPanelIndex = input.lastFramePanelIndex
+  const panelIndex =
+    typeof rawPanelIndex === 'number'
+      ? rawPanelIndex
+      : normalizeString(rawPanelIndex)
+        ? Number(normalizeString(rawPanelIndex))
+        : NaN
+
+  return Boolean(storyboardId && Number.isInteger(panelIndex) && panelIndex >= 0)
+}
+
 function usesVideoTokenPricing(modelKey: string): boolean {
   return !!resolveAiVideoTokenPricingContract(modelKey)
 }
@@ -109,6 +124,10 @@ function validateFirstLastFrameModel(input: unknown) {
   const capabilities = resolveBuiltinCapabilitiesByModelKey('video', flModel)
   if (capabilities?.video?.firstlastframe !== true) {
     throw new Error('PROJECT_AGENT_FIRSTLASTFRAME_MODEL_UNSUPPORTED')
+  }
+
+  if (!hasFirstLastFrameLastFrameSource(input)) {
+    throw new Error('PROJECT_AGENT_FIRSTLASTFRAME_LAST_FRAME_REQUIRED')
   }
 }
 
@@ -233,11 +252,26 @@ async function executeGenerateEpisodeVideosOperation(params: {
   if (!episodeId) {
     throw new Error('PROJECT_AGENT_EPISODE_REQUIRED')
   }
+  const episode = await prisma.projectEpisode.findFirst({
+    where: {
+      id: episodeId,
+      projectId: params.ctx.projectId,
+    },
+    select: { id: true },
+  })
+  if (!episode) {
+    throw new Error('PROJECT_AGENT_EPISODE_NOT_FOUND')
+  }
   const limit = typeof payload.limit === 'number' && Number.isFinite(payload.limit) ? payload.limit : 20
 
   const panels = await prisma.projectPanel.findMany({
     where: {
-      storyboard: { episodeId },
+      storyboard: {
+        episode: {
+          id: episodeId,
+          projectId: params.ctx.projectId,
+        },
+      },
       imageUrl: { not: null },
       OR: [
         { videoUrl: null },
@@ -338,7 +372,15 @@ async function executeGeneratePanelVideoOperation(params: {
       throw new Error('PROJECT_AGENT_PANEL_REQUIRED')
     }
     const panel = await prisma.projectPanel.findFirst({
-      where: { storyboardId, panelIndex: Number(panelIndex) },
+      where: {
+        storyboardId,
+        panelIndex: Number(panelIndex),
+        storyboard: {
+          episode: {
+            projectId: params.ctx.projectId,
+          },
+        },
+      },
       select: { id: true, videoUrl: true, lastVideoGenerationOptions: true, storyboard: { select: { episodeId: true } } },
     })
     panelId = panel?.id || ''
@@ -350,8 +392,15 @@ async function executeGeneratePanelVideoOperation(params: {
     throw new Error('PROJECT_AGENT_PANEL_NOT_FOUND')
   }
   if (normalizeString(payload.panelId)) {
-    const panel = await prisma.projectPanel.findUnique({
-      where: { id: panelId },
+    const panel = await prisma.projectPanel.findFirst({
+      where: {
+        id: panelId,
+        storyboard: {
+          episode: {
+            projectId: params.ctx.projectId,
+          },
+        },
+      },
       select: { videoUrl: true, lastVideoGenerationOptions: true, storyboard: { select: { episodeId: true } } },
     })
     if (!panel) {

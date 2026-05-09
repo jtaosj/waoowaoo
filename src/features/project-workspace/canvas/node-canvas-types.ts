@@ -9,6 +9,8 @@ export type WorkspaceCanvasNodeKind =
   | 'imageAsset'
   | 'videoClip'
   | 'finalTimeline'
+  | 'editTimelineAgent'
+  | 'editTimelineSegment'
 
 export type WorkspaceCanvasTargetType = 'episode' | 'clip' | 'panel'
 
@@ -169,6 +171,46 @@ export interface WorkspaceCanvasFinalDetails {
   readonly totalVideos: number
   readonly totalDuration?: number | null
   readonly orderedVideoLabels: readonly string[]
+  readonly finalVideo?: {
+    readonly editorProjectId?: string | null
+    readonly url?: string | null
+    readonly status?: string | null
+    readonly updatedAt?: string | null
+  } | null
+}
+
+export interface WorkspaceCanvasEditTimelineAgentOutput {
+  readonly shotId: string
+  readonly text: string
+}
+
+export interface WorkspaceCanvasEditTimelineAgentDetails {
+  readonly role: string
+  readonly phase?: 'dispatch' | 'specialist' | 'synthesis'
+  readonly mission: string
+  readonly summary: string
+  readonly decision?: string | null
+  readonly shotIds: readonly string[]
+  readonly outputs: readonly WorkspaceCanvasEditTimelineAgentOutput[]
+}
+
+export interface WorkspaceCanvasEditTimelineSegmentShot {
+  readonly id: string
+  readonly title: string
+  readonly timeLabel: string
+  readonly goal: string
+  readonly visual?: string | null
+  readonly story?: string | null
+  readonly sound?: string | null
+  readonly caption?: string | null
+}
+
+export interface WorkspaceCanvasEditTimelineSegmentDetails {
+  readonly startLabel: string
+  readonly endLabel: string
+  readonly durationLabel: string
+  readonly intent: string
+  readonly shots: readonly WorkspaceCanvasEditTimelineSegmentShot[]
 }
 
 export interface WorkspaceCanvasNodeData extends Record<string, unknown> {
@@ -196,6 +238,8 @@ export interface WorkspaceCanvasNodeData extends Record<string, unknown> {
   readonly imageDetails?: WorkspaceCanvasImageDetails
   readonly videoDetails?: WorkspaceCanvasVideoDetails
   readonly finalDetails?: WorkspaceCanvasFinalDetails
+  readonly editTimelineAgentDetails?: WorkspaceCanvasEditTimelineAgentDetails
+  readonly editTimelineSegmentDetails?: WorkspaceCanvasEditTimelineSegmentDetails
 }
 
 export type WorkspaceCanvasFlowNode = Node<WorkspaceCanvasNodeData, 'workspaceNode'>

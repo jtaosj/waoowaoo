@@ -101,6 +101,11 @@ const artifactCatalog: Record<ArtifactType, ArtifactDefinition> = {
     scope: 'panel',
     summary: 'Rendered panel video output.',
   },
+  [ARTIFACT_TYPES.FINAL_VIDEO]: {
+    type: ARTIFACT_TYPES.FINAL_VIDEO,
+    scope: 'episode',
+    summary: 'Final assembled episode video output.',
+  },
 }
 
 export function getArtifactDefinition(type: ArtifactType): ArtifactDefinition {

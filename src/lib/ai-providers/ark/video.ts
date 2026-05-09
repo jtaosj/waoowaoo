@@ -408,14 +408,19 @@ export async function executeArkVideoGeneration(input: AiProviderVideoExecutionC
     }
   }
 
-  const imageBase64 = await normalizeToBase64ForGeneration(input.imageUrl)
   const content: ArkVideoTaskRequest['content'] = []
   const trimmedPrompt = typeof prompt === 'string' ? prompt.trim() : ''
   if (trimmedPrompt) {
     content.push({ type: 'text', text: trimmedPrompt })
   }
 
+  const sourceImageUrl = typeof input.imageUrl === 'string' ? input.imageUrl.trim() : ''
+  const imageBase64 = sourceImageUrl ? await normalizeToBase64ForGeneration(sourceImageUrl) : null
+
   if (lastFrameImageUrl) {
+    if (!imageBase64) {
+      throw new Error('ARK_VIDEO_FIRST_FRAME_IMAGE_REQUIRED')
+    }
     const lastImageBase64 = await normalizeToBase64ForGeneration(lastFrameImageUrl)
     content.push({
       type: 'image_url',
@@ -427,11 +432,15 @@ export async function executeArkVideoGeneration(input: AiProviderVideoExecutionC
       image_url: { url: lastImageBase64 },
       role: 'last_frame',
     })
-  } else {
+  } else if (imageBase64) {
     content.push({
       type: 'image_url',
       image_url: { url: imageBase64 },
     })
+  }
+
+  if (content.length === 0) {
+    throw new Error('ARK_VIDEO_TEXT_OR_IMAGE_REQUIRED')
   }
 
   const requestBody: ArkVideoTaskRequest = {

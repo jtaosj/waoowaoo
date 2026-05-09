@@ -11,6 +11,8 @@ export const projectCanvasNodeTypeSchema = z.enum([
   'imageAsset',
   'videoClip',
   'finalTimeline',
+  'editTimelineAgent',
+  'editTimelineSegment',
 ])
 
 export type CanvasLayoutNodeType = z.infer<typeof projectCanvasNodeTypeSchema>

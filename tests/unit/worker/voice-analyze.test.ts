@@ -4,6 +4,7 @@ import { TASK_TYPE, type TaskJobData } from '@/lib/task/types'
 
 const txState = vi.hoisted(() => ({
   createdRows: [] as Array<Record<string, unknown>>,
+  updatedRows: [] as Array<Record<string, unknown>>,
   deletedWhereClauses: [] as Array<Record<string, unknown>>,
 }))
 
@@ -89,6 +90,7 @@ describe('worker voice-analyze behavior', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     txState.createdRows = []
+    txState.updatedRows = []
     txState.deletedWhereClauses = []
 
     prismaMock.project.findUnique.mockResolvedValue({
@@ -132,7 +134,12 @@ describe('worker voice-analyze behavior', () => {
     prismaMock.$transaction.mockImplementation(async (fn: (tx: {
       projectVoiceLine: {
         deleteMany: (args: { where: Record<string, unknown> }) => Promise<unknown>
-        create: (args: { data: Record<string, unknown>; select: { id: boolean; speaker: boolean; matchedStoryboardId: boolean } }) => Promise<{
+        upsert: (args: {
+          where: Record<string, unknown>
+          create: Record<string, unknown>
+          update: Record<string, unknown>
+          select: { id: boolean; speaker: boolean; matchedStoryboardId: boolean }
+        }) => Promise<{
           id: string
           speaker: string
           matchedStoryboardId: string | null
@@ -145,11 +152,17 @@ describe('worker voice-analyze behavior', () => {
             txState.deletedWhereClauses.push(args.where)
             return undefined
           },
-          create: async (args: { data: Record<string, unknown>; select: { id: boolean; speaker: boolean; matchedStoryboardId: boolean } }) => {
-            txState.createdRows.push(args.data)
-            const speaker = typeof args.data.speaker === 'string' ? args.data.speaker : 'unknown'
-            const matchedStoryboardId = typeof args.data.matchedStoryboardId === 'string'
-              ? args.data.matchedStoryboardId
+          upsert: async (args: {
+            where: Record<string, unknown>
+            create: Record<string, unknown>
+            update: Record<string, unknown>
+            select: { id: boolean; speaker: boolean; matchedStoryboardId: boolean }
+          }) => {
+            txState.createdRows.push(args.create)
+            txState.updatedRows.push(args.update)
+            const speaker = typeof args.create.speaker === 'string' ? args.create.speaker : 'unknown'
+            const matchedStoryboardId = typeof args.create.matchedStoryboardId === 'string'
+              ? args.create.matchedStoryboardId
               : null
             return {
               id: `line-${txState.createdRows.length}`,
@@ -185,6 +198,13 @@ describe('worker voice-analyze behavior', () => {
     expect(txState.createdRows[0]).toEqual(expect.objectContaining({
       episodeId: 'episode-1',
       lineIndex: 1,
+      speaker: 'Hero',
+      content: '第一句台词',
+      matchedPanelId: 'panel-1',
+      matchedStoryboardId: 'storyboard-1',
+      matchedPanelIndex: 0,
+    }))
+    expect(txState.updatedRows[0]).toEqual(expect.objectContaining({
       speaker: 'Hero',
       content: '第一句台词',
       matchedPanelId: 'panel-1',

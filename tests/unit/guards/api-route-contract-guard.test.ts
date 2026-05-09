@@ -9,6 +9,8 @@ describe('api route contract guard', () => {
   it('allows explicit public and framework-managed exceptions', () => {
     expect(API_HANDLER_ALLOWLIST.has('src/app/api/auth/[...nextauth]/route.ts')).toBe(true)
     expect(PUBLIC_ROUTE_ALLOWLIST.has('src/app/api/system/boot-id/route.ts')).toBe(true)
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('src/app/api/storage/sign/route.ts')).toBe(false)
+    expect(PUBLIC_ROUTE_ALLOWLIST.has('src/app/api/files/[...path]/route.ts')).toBe(false)
     expect(
       inspectRouteContract(
         'src/app/api/system/boot-id/route.ts',
@@ -30,6 +32,20 @@ describe('api route contract guard', () => {
     expect(inspectRouteContract('src/app/api/user/secure/route.ts', content)).toEqual([])
   })
 
+  it('passes protected routes that use a typed apiHandler wrapper', () => {
+    const content = `
+      import { apiHandler } from '@/lib/api-errors'
+      import { authorizeStorageKeyRequest } from '@/lib/storage/route-access'
+      export const GET = apiHandler<{ path: string[] }>(async (request, { params }) => {
+        const value = await params
+        await authorizeStorageKeyRequest(request, value.path.join('/'))
+        return Response.json({ ok: true })
+      })
+    `
+
+    expect(inspectRouteContract('src/app/api/files/[...path]/route.ts', content)).toEqual([])
+  })
+
   it('flags protected routes that skip apiHandler or auth', () => {
     const missingApiHandler = `
       import { requireUserAuth } from '@/lib/api-auth'
@@ -47,7 +63,7 @@ describe('api route contract guard', () => {
       'src/app/api/user/secure/route.ts missing apiHandler wrapper',
     ])
     expect(inspectRouteContract('src/app/api/user/secure/route.ts', missingAuth)).toEqual([
-      'src/app/api/user/secure/route.ts missing requireUserAuth/requireProjectAuth/requireProjectAuthLight',
+      'src/app/api/user/secure/route.ts missing requireUserAuth/requireProjectAuth/requireProjectAuthLight/authorizeStorageKeyRequest',
     ])
   })
 })

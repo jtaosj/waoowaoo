@@ -3,6 +3,7 @@ import type { ProjectClip, ProjectPanel, ProjectShot, ProjectStoryboard } from '
 import {
   buildWorkspaceNodeCanvasProjection,
 } from '@/features/project-workspace/canvas/hooks/useWorkspaceNodeCanvasProjection'
+import type { EditTimelinePartData } from '@/lib/project-agent/types'
 
 function t(key: string, values?: Record<string, string | number>): string {
   if (!values) return key
@@ -109,6 +110,132 @@ function createStoryboard(input: {
   }
 }
 
+function createEditTimelineData(): EditTimelinePartData {
+  return {
+    sourceStory: '客户原文：她在凌晨三点的办公室里快要放弃，直到屏幕上的第一支 AI 短片让她重新想起自己为什么创作。',
+    timeline: {
+      id: 'timeline-canvas-test',
+      title: '深夜创作反转',
+      aspectRatio: '9:16',
+      fps: 24,
+      segments: [
+        {
+          id: 'seg-pressure',
+          label: '压抑开场',
+          startMs: 0,
+          durationMs: 3_000,
+          intent: '表现压抑、疲惫、被工作困住。',
+          shotIds: ['shot-pressure'],
+        },
+        {
+          id: 'seg-return',
+          label: '重新点亮',
+          startMs: 3_000,
+          durationMs: 3_000,
+          intent: '第一支 AI 短片让创作欲望回来。',
+          shotIds: ['shot-return'],
+        },
+      ],
+      shots: [
+        {
+          id: 'shot-pressure',
+          segmentId: 'seg-pressure',
+          title: '深夜办公室',
+          goal: '表现压抑、疲惫、被工作困住。',
+          track: 'video',
+          order: 1,
+          startMs: 0,
+          durationMs: 3_000,
+          dependsOn: [],
+          inputArtifacts: [],
+          outputArtifacts: [],
+          referenceIds: [],
+          editorial: {
+            visual: '深夜办公室，女生坐在电脑前，窗外下雨。',
+            story: '表现压抑、疲惫、被工作困住。',
+            sound: '低频环境音、雨声、键盘声。',
+            caption: '我好像快忘了，自己为什么想创作。',
+          },
+          control: {
+            prompt: '深夜办公室。',
+            referenceImageRefs: [],
+            characterRefIds: [],
+            performanceRefIds: [],
+          },
+        },
+        {
+          id: 'shot-return',
+          segmentId: 'seg-return',
+          title: '屏幕点亮',
+          goal: '重新找回创作欲。',
+          track: 'video',
+          order: 2,
+          startMs: 3_000,
+          durationMs: 3_000,
+          dependsOn: [],
+          inputArtifacts: [],
+          outputArtifacts: [],
+          referenceIds: [],
+          editorial: {
+            visual: '屏幕暖光照亮她的脸。',
+            story: '她被第一支短片重新打动。',
+            sound: '音乐从低落转明亮。',
+            caption: '原来我还想继续。',
+          },
+          control: {
+            prompt: '屏幕暖光。',
+            referenceImageRefs: [],
+            characterRefIds: [],
+            performanceRefIds: [],
+          },
+        },
+      ],
+      references: [],
+      continuityBible: {
+        characters: [],
+        locations: [],
+        props: [],
+        visualRules: [],
+        audioRules: [],
+      },
+    },
+    unresolvedRefs: [],
+    risks: [],
+    estimatedTaskCount: 1,
+    agentCrew: {
+      director: {
+        agentId: 'main-director',
+        role: 'main-director',
+        title: '主 Agent',
+        mission: '理解故事并分发任务。',
+        summary: '主 Agent 已拆出压抑开场。',
+        shotIds: ['shot-pressure', 'shot-return'],
+        outputs: [
+          { shotId: 'shot-pressure', text: '0-3s 压抑开场。' },
+          { shotId: 'shot-return', text: '3-6s 重新点亮。' },
+        ],
+        status: 'drafted',
+      },
+      subagents: [
+        {
+          agentId: 'visual-director',
+          role: 'visual-director',
+          title: '画面 Agent',
+          mission: '负责画面描述。',
+          summary: '画面 Agent 负责办公室和雨夜氛围。',
+          shotIds: ['shot-pressure', 'shot-return'],
+          outputs: [
+            { shotId: 'shot-pressure', text: '深夜办公室，窗外下雨。' },
+            { shotId: 'shot-return', text: '屏幕暖光照亮她的脸。' },
+          ],
+          status: 'drafted',
+        },
+      ],
+      synthesis: '主 Agent 综合专业 Agent 输出。',
+    },
+  }
+}
+
 describe('workspace node canvas projection', () => {
   it('shows only the story input node when the episode has no story data', () => {
     const projection = buildWorkspaceNodeCanvasProjection({
@@ -126,6 +253,7 @@ describe('workspace node canvas projection', () => {
   })
 
   it('projects real story, clips, shots, image nodes, video nodes, and final timeline without mock data', () => {
+    const finalVideoUrl = '/api/final-video/editor-final.mp4'
     const projection = buildWorkspaceNodeCanvasProjection({
       episodeId: 'episode-1',
       storyText: 'A real story',
@@ -153,6 +281,12 @@ describe('workspace node canvas projection', () => {
           ],
         }),
       ],
+      finalVideo: {
+        editorProjectId: 'editor-final',
+        url: finalVideoUrl,
+        status: 'completed',
+        updatedAt: '2026-05-09T12:00:00.000Z',
+      },
       savedLayouts: [],
       translate: t,
     })
@@ -176,9 +310,176 @@ describe('workspace node canvas projection', () => {
     const shotNode = projection.nodes.find((node) => node.id === 'shot:panel-1')
     const imageNode = projection.nodes.find((node) => node.id === 'image:panel-1')
     const videoNode = projection.nodes.find((node) => node.id === 'video:panel-1')
+    const finalNode = projection.nodes.find((node) => node.id === 'final:episode-1')
     expect(shotNode?.data.action).toEqual({ type: 'generate_image', panelId: 'panel-1' })
     expect(imageNode?.data.action).toEqual({ type: 'generate_image', panelId: 'panel-1' })
     expect(videoNode?.data.action).toBeUndefined()
+    expect(finalNode?.data.finalDetails?.finalVideo).toEqual({
+      editorProjectId: 'editor-final',
+      url: finalVideoUrl,
+      status: 'completed',
+      updatedAt: '2026-05-09T12:00:00.000Z',
+    })
+    expect(finalNode?.data.height).toBeGreaterThan(300)
+  })
+
+  it('projects edit timeline results into draggable workspace nodes instead of an external board', () => {
+    const projection = buildWorkspaceNodeCanvasProjection({
+      episodeId: 'episode-1',
+      storyText: '',
+      editTimelineData: createEditTimelineData(),
+      clips: [],
+      storyboards: [],
+      savedLayouts: [],
+      translate: t,
+    })
+
+    const storyNode = projection.nodes.find((node) => node.id === 'story:episode-1')
+    const dispatchNode = projection.nodes.find((node) => node.id === 'edit-agent:main-director:dispatch')
+    const visualAgentNode = projection.nodes.find((node) => node.id === 'edit-agent:visual-director')
+    const synthesisNode = projection.nodes.find((node) => node.id === 'edit-agent:main-director:synthesis')
+    const segmentNode = projection.nodes.find((node) => node.id === 'edit-segment:seg-pressure')
+    const secondSegmentNode = projection.nodes.find((node) => node.id === 'edit-segment:seg-return')
+
+    expect(storyNode?.data.body).toContain('客户原文：她在凌晨三点的办公室里快要放弃')
+    expect(dispatchNode).toMatchObject({
+      type: 'workspaceNode',
+      draggable: true,
+      data: {
+        kind: 'editTimelineAgent',
+        title: 'nodes.editAgent.dispatchTitle:{"title":"主 Agent"}',
+        body: '理解故事并分发任务。',
+        editTimelineAgentDetails: expect.objectContaining({
+          phase: 'dispatch',
+          decision: 'nodes.editAgent.dispatchDecision',
+        }),
+      },
+    })
+    expect(visualAgentNode).toMatchObject({
+      data: {
+        kind: 'editTimelineAgent',
+        editTimelineAgentDetails: expect.objectContaining({
+          phase: 'specialist',
+          outputs: expect.arrayContaining([
+            expect.objectContaining({ shotId: 'shot-return', text: '屏幕暖光照亮她的脸。' }),
+          ]),
+        }),
+      },
+    })
+    expect(synthesisNode).toMatchObject({
+      type: 'workspaceNode',
+      draggable: true,
+      data: {
+        kind: 'editTimelineAgent',
+        title: 'nodes.editAgent.synthesisTitle:{"title":"主 Agent"}',
+        body: '主 Agent 综合专业 Agent 输出。',
+        editTimelineAgentDetails: expect.objectContaining({
+          phase: 'synthesis',
+          decision: 'nodes.editAgent.synthesisDecision',
+        }),
+      },
+    })
+    expect(segmentNode).toMatchObject({
+      type: 'workspaceNode',
+      draggable: true,
+      data: {
+        kind: 'editTimelineSegment',
+        title: '压抑开场',
+        body: '表现压抑、疲惫、被工作困住。',
+      },
+    })
+    expect(secondSegmentNode).toMatchObject({
+      type: 'workspaceNode',
+      draggable: true,
+      data: {
+        kind: 'editTimelineSegment',
+        title: '重新点亮',
+      },
+    })
+    expect(segmentNode?.data.editTimelineSegmentDetails?.shots[0]?.visual).toContain('深夜办公室')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('analysis:episode-1->edit-agent:main-director:dispatch')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('edit-agent:main-director:dispatch->edit-agent:visual-director')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('edit-agent:visual-director->edit-agent:main-director:synthesis')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('edit-agent:main-director:synthesis->edit-segment:seg-pressure')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).toContain('edit-segment:seg-pressure->edit-segment:seg-return')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).not.toContain('edit-agent:visual-director->edit-segment:seg-pressure')
+    expect(projection.edges.map((edge) => `${edge.source}->${edge.target}`)).not.toContain('edit-agent:main-director:synthesis->edit-segment:seg-return')
+  })
+
+  it('separates same-column cards so the workspace is readable', () => {
+    const projection = buildWorkspaceNodeCanvasProjection({
+      episodeId: 'episode-1',
+      storyText: 'A real story',
+      clips: [createClip('clip-1', 'first clip content')],
+      storyboards: [
+        createStoryboard({
+          id: 'storyboard-1',
+          clipId: 'clip-1',
+          panels: [
+            createPanel({ id: 'panel-1', panelIndex: 0, imageUrl: 'https://example.com/1.png' }),
+            createPanel({ id: 'panel-2', panelIndex: 1, imageUrl: 'https://example.com/2.png' }),
+            createPanel({ id: 'panel-3', panelIndex: 2, imageUrl: 'https://example.com/3.png' }),
+          ],
+        }),
+      ],
+      savedLayouts: [],
+      translate: t,
+    })
+    const byColumn = new Map<number, Array<{ readonly id: string; readonly top: number; readonly bottom: number }>>()
+    projection.nodes.forEach((node) => {
+      const column = node.position.x
+      const list = byColumn.get(column) ?? []
+      list.push({ id: node.id, top: node.position.y, bottom: node.position.y + node.data.height })
+      byColumn.set(column, list)
+    })
+
+    byColumn.forEach((nodesInColumn) => {
+      const sorted = [...nodesInColumn].sort((left, right) => left.top - right.top)
+      sorted.forEach((node, index) => {
+        const previous = sorted[index - 1]
+        if (!previous) return
+        expect(node.top, `${previous.id} should not overlap ${node.id}`).toBeGreaterThanOrEqual(previous.bottom + 32)
+      })
+    })
+  })
+
+  it('renders plan-stage edit timeline shots even before provider control payloads exist', () => {
+    const planStageTimeline = {
+      ...createEditTimelineData(),
+      timeline: {
+        ...createEditTimelineData().timeline,
+        shots: [
+          {
+            id: 'shot-pressure',
+            segmentId: 'seg-pressure',
+            title: '深夜办公室',
+            goal: '表现压抑、疲惫、被工作困住。',
+            track: 'video',
+            order: 1,
+            startMs: 0,
+            durationMs: 3_000,
+            dependsOn: [],
+            inputArtifacts: [],
+            outputArtifacts: [],
+            referenceIds: [],
+            visual: '计划阶段画面描述。',
+          },
+        ],
+      },
+    } as unknown as EditTimelinePartData
+    const projection = buildWorkspaceNodeCanvasProjection({
+      episodeId: 'episode-1',
+      storyText: '',
+      editTimelineData: planStageTimeline,
+      clips: [],
+      storyboards: [],
+      savedLayouts: [],
+      translate: t,
+    })
+
+    const segmentNode = projection.nodes.find((node) => node.id === 'edit-segment:seg-pressure')
+
+    expect(segmentNode?.data.editTimelineSegmentDetails?.shots[0]?.visual).toBe('计划阶段画面描述。')
   })
 
   it('creates a video node for an image-ready panel without submitting a model-less quick action', () => {

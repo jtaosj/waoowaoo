@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { WorkspaceAssistantPanelHeader } from '@/features/project-workspace/components/workspace-assistant/WorkspaceAssistantPanelHeader'
 import { WorkspaceAssistantPanelRail } from '@/features/project-workspace/components/workspace-assistant/WorkspaceAssistantPanelRail'
 import {
+  buildWorkspaceAssistantPanelInlineSize,
   buildWorkspaceAssistantPanelLayout,
   clampWorkspaceAssistantPanelWidth,
   WORKSPACE_ASSISTANT_PANEL_MAX_WIDTH_PX,
@@ -43,6 +44,11 @@ describe('workspace assistant panel layout', () => {
       translateXPx: 0,
       state: 'collapsed',
     })
+  })
+
+  it('limits the rendered panel width to the current viewport on narrow screens', () => {
+    expect(buildWorkspaceAssistantPanelInlineSize(500)).toBe('min(500px, calc(100vw - 2rem))')
+    expect(buildWorkspaceAssistantPanelInlineSize(64)).toBe('min(64px, calc(100vw - 2rem))')
   })
 
   it('renders explicit collapse and expand controls for the sidebar rail', () => {

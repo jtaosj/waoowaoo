@@ -16,6 +16,10 @@ const storageMock = vi.hoisted(() => ({
   getSignedObjectUrl: vi.fn(async (key: string, ttl: number) => `https://signed.example/${key}?expires=${ttl}`),
 }))
 
+const storageAccessMock = vi.hoisted(() => ({
+  assertUserCanAccessStorageKey: vi.fn(async () => undefined),
+}))
+
 vi.mock('@/lib/api-auth', () => {
   const unauthorized = () => new Response(
     JSON.stringify({ error: { code: 'UNAUTHORIZED' } }),
@@ -33,10 +37,12 @@ vi.mock('@/lib/api-auth', () => {
 
 vi.mock('@/lib/logging/file-writer', () => loggingMock)
 vi.mock('@/lib/storage', () => storageMock)
+vi.mock('@/lib/storage/access-control', () => storageAccessMock)
 
 describe('api contract - infra routes (behavior)', () => {
   const routes = ROUTE_CATALOG.filter((entry) => entry.contractGroup === 'infra-routes')
   const originalUploadDir = process.env.UPLOAD_DIR
+  const originalNextAuthSecret = process.env.NEXTAUTH_SECRET
   const tempState = {
     uploadDirAbs: '',
     uploadDirRel: '',
@@ -45,6 +51,7 @@ describe('api contract - infra routes (behavior)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authState.authenticated = false
+    process.env.NEXTAUTH_SECRET = 'test-storage-access-secret'
     vi.resetModules()
   })
 
@@ -60,6 +67,11 @@ describe('api contract - infra routes (behavior)', () => {
     } else {
       process.env.UPLOAD_DIR = originalUploadDir
     }
+    if (originalNextAuthSecret === undefined) {
+      delete process.env.NEXTAUTH_SECRET
+    } else {
+      process.env.NEXTAUTH_SECRET = originalNextAuthSecret
+    }
   })
 
   async function prepareUploadDir(): Promise<void> {
@@ -68,6 +80,11 @@ describe('api contract - infra routes (behavior)', () => {
     tempState.uploadDirAbs = path.join(process.cwd(), tempState.uploadDirRel)
     process.env.UPLOAD_DIR = tempState.uploadDirRel
     await fs.mkdir(tempState.uploadDirAbs, { recursive: true })
+  }
+
+  async function createSignedStorageQuery(key: string, expiresInSeconds = 3600): Promise<string> {
+    const { createStorageAccessQuery } = await import('@/lib/storage/access-token')
+    return createStorageAccessQuery(key, expiresInSeconds).toString()
   }
 
   it('infra route group exists', () => {
@@ -109,7 +126,7 @@ describe('api contract - infra routes (behavior)', () => {
     expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="waoowaoo-logs-/)
   })
 
-  it('GET /api/cos/image redirects to signed storage route with normalized query', async () => {
+  it('GET /api/cos/image rejects unauthenticated unsigned image keys', async () => {
     const mod = await import('@/app/api/cos/image/route')
     const req = buildMockRequest({
       path: '/api/cos/image?key=folder/a.png&expires=7200',
@@ -118,11 +135,49 @@ describe('api contract - infra routes (behavior)', () => {
 
     const res = await mod.GET(req, { params: Promise.resolve({}) })
 
-    expect(res.status).toBe(307)
-    expect(res.headers.get('location')).toBe('http://localhost:3000/api/storage/sign?key=folder%2Fa.png&expires=7200')
+    expect(res.status).toBe(401)
+    expect(storageAccessMock.assertUserCanAccessStorageKey).not.toHaveBeenCalled()
   })
 
-  it('GET /api/storage/sign redirects to signed object url with default ttl', async () => {
+  it('GET /api/cos/image redirects authorized keys to a signed storage route', async () => {
+    authState.authenticated = true
+    const mod = await import('@/app/api/cos/image/route')
+    const req = buildMockRequest({
+      path: '/api/cos/image?key=folder/a.png&expires=7200',
+      method: 'GET',
+    })
+
+    const res = await mod.GET(req, { params: Promise.resolve({}) })
+    const location = new URL(res.headers.get('location') || '')
+
+    expect(res.status).toBe(307)
+    expect(location.pathname).toBe('/api/storage/sign')
+    expect(location.searchParams.get('key')).toBe('folder/a.png')
+    expect(location.searchParams.get('expires')).toBe('7200')
+    expect(location.searchParams.get('expiresAt')).toMatch(/^\d+$/)
+    expect(location.searchParams.get('signature')?.length).toBeGreaterThan(20)
+    expect(storageAccessMock.assertUserCanAccessStorageKey).toHaveBeenCalledWith({
+      key: 'folder/a.png',
+      userId: 'user-1',
+    })
+  })
+
+  it('GET /api/storage/sign rejects unauthenticated unsigned object keys', async () => {
+    const mod = await import('@/app/api/storage/sign/route')
+    const req = buildMockRequest({
+      path: '/api/storage/sign?key=folder/a.png',
+      method: 'GET',
+    })
+
+    const res = await mod.GET(req, { params: Promise.resolve({}) })
+
+    expect(res.status).toBe(401)
+    expect(storageMock.getSignedObjectUrl).not.toHaveBeenCalled()
+    expect(storageAccessMock.assertUserCanAccessStorageKey).not.toHaveBeenCalled()
+  })
+
+  it('GET /api/storage/sign redirects authenticated owner requests to signed object url', async () => {
+    authState.authenticated = true
     const mod = await import('@/app/api/storage/sign/route')
     const req = buildMockRequest({
       path: '/api/storage/sign?key=folder/a.png',
@@ -132,8 +187,27 @@ describe('api contract - infra routes (behavior)', () => {
     const res = await mod.GET(req, { params: Promise.resolve({}) })
 
     expect(storageMock.getSignedObjectUrl).toHaveBeenCalledWith('folder/a.png', 3600)
+    expect(storageAccessMock.assertUserCanAccessStorageKey).toHaveBeenCalledWith({
+      key: 'folder/a.png',
+      userId: 'user-1',
+    })
     expect(res.status).toBe(307)
     expect(res.headers.get('location')).toBe('https://signed.example/folder/a.png?expires=3600')
+  })
+
+  it('GET /api/storage/sign accepts valid signed storage access without session auth', async () => {
+    const signedQuery = await createSignedStorageQuery('folder/a.png')
+    const mod = await import('@/app/api/storage/sign/route')
+    const req = buildMockRequest({
+      path: `/api/storage/sign?key=folder/a.png&${signedQuery}`,
+      method: 'GET',
+    })
+
+    const res = await mod.GET(req, { params: Promise.resolve({}) })
+
+    expect(storageMock.getSignedObjectUrl).toHaveBeenCalledWith('folder/a.png', 3600)
+    expect(storageAccessMock.assertUserCanAccessStorageKey).not.toHaveBeenCalled()
+    expect(res.status).toBe(307)
   })
 
   it('GET /api/system/boot-id returns the current server boot id', async () => {
@@ -159,30 +233,14 @@ describe('api contract - infra routes (behavior)', () => {
     const res = await mod.GET(req, {
       params: Promise.resolve({ path: ['..', 'secret.txt'] }),
     })
-    const json = await res.json() as { error: string }
+    const json = await res.json() as { code: string; error: { code: string } }
 
     expect(res.status).toBe(403)
-    expect(json.error).toBe('Access denied')
+    expect(json.code).toBe('LOCAL_FILE_PATH_TRAVERSAL')
+    expect(json.error.code).toBe('FORBIDDEN')
   })
 
-  it('GET /api/files/[...path] returns 404 when the file is missing', async () => {
-    await prepareUploadDir()
-    const mod = await import('@/app/api/files/[...path]/route')
-    const req = buildMockRequest({
-      path: '/api/files/missing.txt',
-      method: 'GET',
-    })
-
-    const res = await mod.GET(req, {
-      params: Promise.resolve({ path: ['missing.txt'] }),
-    })
-    const json = await res.json() as { error: string }
-
-    expect(res.status).toBe(404)
-    expect(json.error).toBe('File not found')
-  })
-
-  it('GET /api/files/[...path] serves local files from the configured upload dir', async () => {
+  it('GET /api/files/[...path] rejects unsigned local file requests before reading storage', async () => {
     await prepareUploadDir()
     const nestedDir = path.join(tempState.uploadDirAbs, 'folder')
     await fs.mkdir(nestedDir, { recursive: true })
@@ -199,9 +257,52 @@ describe('api contract - infra routes (behavior)', () => {
     })
     const text = await res.text()
 
+    expect(res.status).toBe(401)
+    expect(text).not.toBe('hello local file')
+    expect(storageAccessMock.assertUserCanAccessStorageKey).not.toHaveBeenCalled()
+  })
+
+  it('GET /api/files/[...path] returns 404 when an authorized file is missing', async () => {
+    await prepareUploadDir()
+    const signedQuery = await createSignedStorageQuery('missing.txt')
+    const mod = await import('@/app/api/files/[...path]/route')
+    const req = buildMockRequest({
+      path: `/api/files/missing.txt?${signedQuery}`,
+      method: 'GET',
+    })
+
+    const res = await mod.GET(req, {
+      params: Promise.resolve({ path: ['missing.txt'] }),
+    })
+    const json = await res.json() as { code: string; error: { code: string } }
+
+    expect(res.status).toBe(404)
+    expect(json.code).toBe('LOCAL_FILE_NOT_FOUND')
+    expect(json.error.code).toBe('NOT_FOUND')
+  })
+
+  it('GET /api/files/[...path] serves signed local files from the configured upload dir', async () => {
+    await prepareUploadDir()
+    const nestedDir = path.join(tempState.uploadDirAbs, 'folder')
+    await fs.mkdir(nestedDir, { recursive: true })
+    await fs.writeFile(path.join(nestedDir, 'hello.txt'), 'hello local file', 'utf8')
+
+    const signedQuery = await createSignedStorageQuery('folder/hello.txt')
+    const mod = await import('@/app/api/files/[...path]/route')
+    const req = buildMockRequest({
+      path: `/api/files/folder/hello.txt?${signedQuery}`,
+      method: 'GET',
+    })
+
+    const res = await mod.GET(req, {
+      params: Promise.resolve({ path: ['folder', 'hello.txt'] }),
+    })
+    const text = await res.text()
+
     expect(res.status).toBe(200)
     expect(text).toBe('hello local file')
     expect(res.headers.get('content-type')).toBe('text/plain')
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000')
+    expect(storageAccessMock.assertUserCanAccessStorageKey).not.toHaveBeenCalled()
   })
 })

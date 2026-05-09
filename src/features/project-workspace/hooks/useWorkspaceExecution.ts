@@ -4,13 +4,17 @@ import { useCallback, useMemo, useState } from 'react'
 import { logInfo as _ulogInfo } from '@/lib/logging/core'
 import { useAnalyzeProjectAssets } from '@/lib/query/hooks'
 import { dispatchWorkspaceAssistantMessage } from '../components/workspace-assistant/assistant-send-event'
+import {
+  buildWorkspaceAssistantPlanRequestMessage,
+  type WorkspaceExecutionTranslate,
+} from './assistant-plan-request-message'
 
 interface UseWorkspaceExecutionParams {
   projectId: string
   episodeId?: string
   analysisModel?: string | null
   novelText: string
-  t: (key: string) => string
+  t: WorkspaceExecutionTranslate
   onRefresh: (options?: { scope?: string; mode?: string }) => Promise<void>
   onOpenAssetLibrary: (focusCharacterId?: string | null, refreshAssets?: boolean) => void
 }
@@ -28,6 +32,7 @@ function getErrorMessage(err: unknown): string {
 export function useWorkspaceExecution({
   projectId,
   episodeId,
+  novelText,
   t,
   onRefresh,
 }: UseWorkspaceExecutionParams) {
@@ -68,9 +73,12 @@ export function useWorkspaceExecution({
   const requestAssistantPlan = useCallback(async () => {
     dispatchWorkspaceAssistantMessage({
       key: `assistant-plan-request:${projectId}:${episodeId || 'global'}:${Date.now().toString(36)}`,
-      message: t('execution.assistantPlanRequest'),
+      message: buildWorkspaceAssistantPlanRequestMessage({
+        storyText: novelText,
+        t,
+      }),
     })
-  }, [episodeId, projectId, t])
+  }, [episodeId, novelText, projectId, t])
 
   return {
     isSubmittingTTS,

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import ProgressToast from '@/components/ProgressToast'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { AnimatedBackground } from '@/components/ui/SharedComponents'
@@ -13,13 +13,24 @@ import type { WorkspaceAssistantSelectionContext } from './canvas/ProjectWorkspa
 import { WorkspaceRuntimeProvider } from './WorkspaceRuntimeContext'
 import { useProjectWorkspaceController } from './hooks/useProjectWorkspaceController'
 import type { ProjectWorkspaceProps } from './types'
+import type { EditTimelinePartData } from '@/lib/project-agent/types'
+import {
+  getLatestWorkspaceEditTimeline,
+  isWorkspaceEditTimelineUpdatedEvent,
+  publishWorkspaceEditTimeline,
+  WORKSPACE_EDIT_TIMELINE_UPDATED_EVENT,
+} from './components/workspace-assistant/edit-timeline-board-event'
 import '@/styles/animations.css'
 
 function ProjectWorkspaceContent(props: ProjectWorkspaceProps) {
   const vm = useProjectWorkspaceController(props)
   const [isAssistantPanelCollapsed, setIsAssistantPanelCollapsed] = useState(false)
   const [assistantSelection, setAssistantSelection] = useState<WorkspaceAssistantSelectionContext>({})
+  const [latestEditTimeline, setLatestEditTimeline] = useState<EditTimelinePartData | null>(null)
   const isEpisodeWorkspace = props.viewMode === 'episode'
+  const handleEditTimelineData = useCallback((data: EditTimelinePartData) => {
+    setLatestEditTimeline(publishWorkspaceEditTimeline(data))
+  }, [])
 
   const {
     project,
@@ -31,6 +42,16 @@ function ProjectWorkspaceContent(props: ProjectWorkspaceProps) {
     onEpisodeRename,
     onEpisodeDelete,
   } = props
+
+  useEffect(() => {
+    setLatestEditTimeline(getLatestWorkspaceEditTimeline())
+    const handleEditTimelineUpdated = (event: Event) => {
+      if (!isWorkspaceEditTimelineUpdatedEvent(event)) return
+      setLatestEditTimeline(event.detail.data)
+    }
+    window.addEventListener(WORKSPACE_EDIT_TIMELINE_UPDATED_EVENT, handleEditTimelineUpdated)
+    return () => window.removeEventListener(WORKSPACE_EDIT_TIMELINE_UPDATED_EVENT, handleEditTimelineUpdated)
+  }, [])
 
   if (!vm.project.projectData) {
     return <div className="text-center text-(--glass-text-secondary)">{vm.i18n.tc('loading')}</div>
@@ -85,11 +106,15 @@ function ProjectWorkspaceContent(props: ProjectWorkspaceProps) {
             onAutoStartConsumed={props.onAssistantAutoStartConsumed}
             isCollapsed={isAssistantPanelCollapsed}
             onToggleCollapsed={() => setIsAssistantPanelCollapsed((current) => !current)}
+            onEditTimelineData={handleEditTimelineData}
           />
 
-          <div className={isEpisodeWorkspace ? 'h-full min-w-0 overflow-hidden' : 'min-w-0'}>
+          <div className={isEpisodeWorkspace ? 'relative h-full min-w-0 overflow-hidden' : 'relative min-w-0'}>
             <WorkspaceRuntimeProvider value={vm.runtime.workspaceRuntime}>
-              <ProjectWorkspaceCanvas onAssistantSelectionChange={setAssistantSelection} />
+              <ProjectWorkspaceCanvas
+                editTimelineData={latestEditTimeline}
+                onAssistantSelectionChange={setAssistantSelection}
+              />
             </WorkspaceRuntimeProvider>
           </div>
         </div>

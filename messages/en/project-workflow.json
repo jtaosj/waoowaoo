@@ -162,6 +162,7 @@
     "scriptToStoryboardFailed": "Script to storyboard failed",
     "assistantPlanRequired": "Describe the goal in the AI assistant so it can decide the next step freely.",
     "assistantPlanRequest": "Read the current story from project context, then decide freely what should happen next. You may search and load relevant Skills, create and validate a plan, and ask for confirmation before any write, long-running, or billable operation.",
+    "assistantPlanRequestEditFirstVideo": "Force the current natural-language story input through the edit-first subagent video timeline workflow. The user does not need to say agent, tool, operation, blackboard, or edit-first. Internally call search_skills and load_skill: edit-first-video-director, then use invoke_operation to run create_edit_timeline_plan, validate_edit_timeline, and compile_edit_timeline in order. The create_edit_timeline_plan goal must be the story text below, not this instruction; if the story specifies duration, aspect ratio, or shot count, pass it through or infer it explicitly. First output a visible EditTimelineBlackboard and timeline for my confirmation. The blackboard must include the Main Director's dynamic Macro Script, a per-segment blackboard, and Screenplay, Cinematography, Continuity, Prompt Engineer, Sound, Provider Production, and Film Critic specialist subagents with owner/status/contribution; every segment/shot must include dependencies, prompt package, provider policy, quality, and redo reason. Without final.video evidence, Film Critic may only show pending or blocked status, never a success score. compile_edit_timeline must receive the exact blackboard returned by create_edit_timeline_plan so provider inputs come from the segment blackboard prompt packages; if blackboard coverage is missing, report the blocker explicitly and do not compile timeline-only. Do not submit providers or run billable long-running work until I confirm.\n\nStory text:\n{story}",
     "taskStreamTimeout": "Task timed out. The task may still be running in the background — please check its status or retry"
   },
   "rebuildConfirm": {
@@ -313,11 +314,29 @@
         "lastOptions": "Last Generation Options",
         "lipSyncError": "Lip-sync Error",
         "finalStats": "Final Stats",
+        "finalVideo": "Final Video",
+        "finalVideoPlayer": "Final video player",
+        "finalVideoPending": "The final video is still rendering and will play here when ready.",
+        "finalVideoFailed": "Final video generation failed. Check the workspace conversation for the error.",
+        "finalVideoUnavailable": "No playable final video URL is available yet.",
+        "openFinalVideo": "Open video in new window",
         "totalShots": "Total Shots",
         "totalImages": "Images",
         "totalVideos": "Videos",
         "totalDuration": "Total Duration",
         "videoOrder": "Video Order",
+        "timelineDecision": "Timeline Decision",
+        "mission": "Mission",
+        "agentSummary": "Agent Result",
+        "assignedShots": "Assigned Shots",
+        "agentOutputs": "Outputs",
+        "timelineIntent": "Segment Goal",
+        "timelineShots": "Segment Shots",
+        "shotGoal": "Goal",
+        "visual": "Visual",
+        "timelineStory": "Story",
+        "sound": "Sound",
+        "caption": "Caption",
         "yes": "Yes",
         "lineKind": {
           "action": "Action",
@@ -337,6 +356,7 @@
           "imageGeneration": "Image Generation / Edit",
           "videoPreview": "Video Preview",
           "videoControls": "Video Controls",
+          "finalVideo": "Final Video",
           "finalStats": "Final Stats",
           "timelineOrder": "Timeline Order",
           "storyInput": "Story Input",
@@ -414,7 +434,8 @@
           "generateVideo": "Generate Video",
           "generateFirstLastVideo": "Generate First/Last Video",
           "generateAllVideos": "Batch Generate Videos",
-          "downloadVideos": "Download Videos"
+          "downloadVideos": "Download Videos",
+          "openFinalVideo": "Open Final Video"
         },
         "defaults": {
           "variantTitle": "Shot Variant"
@@ -449,7 +470,12 @@
         "messages": {
           "referenceSelection": "{count} reference images selected. References can come from panels, characters, locations, props, URLs, uploads, or pasted images.",
           "noNextPanelForFirstLast": "This shot has no next shot, so first/last frame mode cannot be used.",
-          "finalExportUnavailable": "AI editing and final export are not connected in this pass."
+          "finalExportUnavailable": "The final video is not complete, or only a non-playable reference is available.",
+          "finalVideoReady": "The final video is ready. Preview it here or open it in a new window.",
+          "finalVideoPlayer": "Final video player",
+          "finalVideoPending": "The final video is still rendering and will play here when ready.",
+          "finalVideoFailed": "Final video generation failed. Check the workspace conversation for the error.",
+          "finalVideoUnavailable": "No playable final video URL is available yet."
         },
         "status": {
           "videoReady": "Ready",
@@ -465,6 +491,7 @@
           "totalVideos": "{count} videos",
           "missingVideos": "{count} missing",
           "totalDuration": "{count}s",
+          "renderStatus": "Render status: {status}",
           "characters": "{count} character references",
           "locations": "{count} location references",
           "props": "{count} prop references"
@@ -510,6 +537,20 @@
           "eyebrow": "Final Output",
           "body": "{videos} video clips have entered the final chain.",
           "meta": "Order comes from domain data"
+        },
+        "editAgent": {
+          "eyebrow": "Agent Assignment",
+          "dispatchEyebrow": "Lead Agent Dispatch",
+          "synthesisEyebrow": "Lead Agent Review",
+          "dispatchTitle": "{title} · Dispatch",
+          "synthesisTitle": "{title} · Synthesis",
+          "dispatchDecision": "The lead agent decides the time split from the source story, target duration, outline, and emotional turn, then assigns each shot to visual, story, sound, and caption agents.",
+          "synthesisDecision": "The lead agent collects specialist outputs, checks time order, emotional progression, shot purpose, and generation feasibility, then outputs the final sequential story timeline.",
+          "meta": "{count} shots"
+        },
+        "editSegment": {
+          "eyebrow": "{range}",
+          "meta": "{count} shots"
         }
       }
     }

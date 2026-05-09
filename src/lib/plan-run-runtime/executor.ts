@@ -14,6 +14,7 @@ import {
   buildOperationInput,
   extractTaskId,
   findRunnableExecutableStep,
+  inputBuildErrorMessage,
   sanitizeOutput,
   type ExecutablePlanStep,
   type JsonRecord,
@@ -24,6 +25,13 @@ export type { ExecutablePlanStep }
 export interface ExecutablePlanInput {
   goal: string
   steps: ExecutablePlanStep[]
+}
+
+export interface PlanRunInitialArtifact {
+  stepKey?: string | null
+  artifactType: string
+  refId: string
+  payload?: JsonRecord | null
 }
 
 export type PlanStepInvoker = (params: {
@@ -38,6 +46,7 @@ export async function executeAgentPlan(params: {
   episodeId?: string | null
   planId?: string | null
   input: ExecutablePlanInput
+  initialArtifacts?: readonly PlanRunInitialArtifact[]
   invokeStep: PlanStepInvoker
 }) {
   const planRun = await createPlanRun({
@@ -58,6 +67,15 @@ export async function executeAgentPlan(params: {
       input: step.input ?? null,
     })),
   })
+  for (const artifact of params.initialArtifacts ?? []) {
+    await createPlanArtifact({
+      planRunId: planRun.id,
+      stepKey: artifact.stepKey ?? null,
+      artifactType: artifact.artifactType,
+      refId: artifact.refId,
+      payload: artifact.payload ?? null,
+    })
+  }
 
   const completedStepKeys = new Set<string>()
   const startedStepKeys = new Set<string>()
@@ -85,10 +103,33 @@ export async function executeAgentPlan(params: {
       stepKey: step.stepKey,
     })
 
-    const operationInput = buildOperationInput({
-      step,
-      episodeId: params.episodeId,
-    })
+    let operationInput: JsonRecord
+    try {
+      operationInput = buildOperationInput({
+        step,
+        episodeId: params.episodeId,
+      })
+    } catch (error) {
+      const message = inputBuildErrorMessage(error)
+      await failPlanStep({
+        planRunId: planRun.id,
+        userId: params.userId,
+        projectId: params.projectId,
+        stepKey: step.stepKey,
+        errorCode: 'PLAN_STEP_INPUT_BUILD_FAILED',
+        errorMessage: message,
+      })
+      return {
+        success: false,
+        planRunId: planRun.id,
+        failedStepKey: step.stepKey,
+        error: {
+          code: 'PLAN_STEP_INPUT_BUILD_FAILED',
+          message,
+        },
+        snapshot: await getPlanRunSnapshot(planRun.id),
+      }
+    }
     const result = await params.invokeStep({
       skillId: step.skillId,
       operationId: step.operationId,
@@ -131,6 +172,7 @@ export async function executeAgentPlan(params: {
         refId: artifactRefId({
           stepKey: step.stepKey,
           taskId,
+          artifactType,
           output,
         }),
         payload: output,

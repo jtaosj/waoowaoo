@@ -1,4 +1,9 @@
 import type { UIMessage } from 'ai'
+import type {
+  EditTimelineBlackboard,
+  EditTimelineConfirmationSummary,
+  ParsedEditTimeline,
+} from '@/lib/edit-timeline'
 import type { ProjectContextSnapshot } from '@/lib/project-context/types'
 import type { ProjectPhase, ProjectPhaseSnapshot } from './project-phase'
 import type { PlanValidationIssue } from '@/lib/agent-skills/types'
@@ -64,6 +69,176 @@ export interface AgentDebugPartData {
   requestedGroups: string[][]
   alwaysOnOperationIds: string[]
   operationIds: string[]
+}
+
+export interface EditTimelineCreativeBrief {
+  theme: string
+  protagonist: string
+  setting: string
+  mood: string
+  twist: string
+  targetDurationMs: number
+  aspectRatio: string
+  missingInfo: string[]
+  assumptions: string[]
+}
+
+export type EditTimelineAgentRole =
+  | 'main-director'
+  | 'visual-director'
+  | 'story-editor'
+  | 'sound-designer'
+  | 'subtitle-writer'
+  | 'screenplay-agent'
+  | 'cinematography-agent'
+  | 'continuity-agent'
+  | 'prompt-engineer-agent'
+  | 'sound-agent'
+
+export interface EditTimelineAgentOutput {
+  shotId: string
+  text: string
+}
+
+export interface EditTimelineAgentContribution {
+  agentId: string
+  role: EditTimelineAgentRole
+  title: string
+  mission: string
+  summary: string
+  shotIds: string[]
+  outputs: EditTimelineAgentOutput[]
+  status: 'drafted' | 'needs-review'
+}
+
+export interface EditTimelineAgentCrew {
+  director: EditTimelineAgentContribution
+  subagents: EditTimelineAgentContribution[]
+  synthesis: string
+}
+
+export type ProjectAgentWorkflowIntent =
+  | 'story-generation'
+  | 'storyboard-generation'
+  | 'video-generation'
+  | 'asset-planning'
+  | 'edit-timeline'
+  | 'voice-subtitle'
+  | 'failure-recovery'
+  | 'continue-project'
+
+export type ProjectAgentWorkflowStatus =
+  | 'planned'
+  | 'blocked'
+  | 'submitted'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+
+export interface ProjectAgentWorkflowShot {
+  shotId: string
+  segmentId: string
+  title: string
+  goal: string
+  startMs: number
+  durationMs: number
+}
+
+export interface ProjectAgentWorkflowAsset {
+  id: string
+  kind: 'character' | 'location' | 'style' | 'prop' | 'reference' | 'source-frame'
+  label: string
+  status: 'available' | 'missing' | 'planned'
+  source: 'user-reference' | 'timeline-reference' | 'text-only'
+  artifactRef?: string | null
+}
+
+export interface ProjectAgentWorkflowProviderTaskTarget {
+  panelId?: string
+  storyboardId?: string
+  panelIndex?: number
+}
+
+export type ProjectAgentWorkflowGenerationOptionValue = string | number | boolean
+
+export interface ProjectAgentWorkflowProviderTask {
+  id: string
+  shotId: string
+  operationId: string
+  skillId: string
+  status: ProjectAgentWorkflowStatus
+  requiredModelType: 'video' | 'image' | 'audio' | 'music' | 'voice' | 'analysis'
+  providerModel?: string | null
+  outputUrl?: string | null
+  generationOptions?: Record<string, ProjectAgentWorkflowGenerationOptionValue>
+  target: ProjectAgentWorkflowProviderTaskTarget | null
+  assetPolicy: 'text-to-video' | 'image-to-video' | 'first-last-frame' | 'requires-asset'
+  blockers: string[]
+}
+
+export interface ProjectAgentWorkflowTrace {
+  stage: string
+  status: 'planned' | 'passed' | 'blocked'
+  message: string
+  refs: string[]
+}
+
+export interface ProjectAgentWorkflowEvalCheck {
+  code: string
+  status: 'passed' | 'warning' | 'blocked'
+  message: string
+}
+
+export interface ProjectAgentWorkflowEval {
+  id: string
+  checks: ProjectAgentWorkflowEvalCheck[]
+}
+
+export interface ProjectAgentWorkflowArtifact {
+  id: string
+  kind: 'timeline' | 'shot' | 'plan-run' | 'provider-task' | 'video' | 'diagnostic'
+  status: ProjectAgentWorkflowStatus
+  ref?: string | null
+}
+
+export interface ProjectAgentWorkflowSnapshot {
+  intent: ProjectAgentWorkflowIntent
+  skillIds: string[]
+  timelineId: string
+  blackboard?: EditTimelineBlackboard
+  shots: ProjectAgentWorkflowShot[]
+  assets: ProjectAgentWorkflowAsset[]
+  providerTasks: ProjectAgentWorkflowProviderTask[]
+  traces: ProjectAgentWorkflowTrace[]
+  evals: ProjectAgentWorkflowEval[]
+  artifacts: ProjectAgentWorkflowArtifact[]
+}
+
+export interface EditTimelinePartData {
+  timeline: ParsedEditTimeline
+  sourceStory?: string
+  creativeBrief?: EditTimelineCreativeBrief
+  agentCrew?: EditTimelineAgentCrew
+  blackboard?: EditTimelineBlackboard
+  workflow?: ProjectAgentWorkflowSnapshot
+  unresolvedRefs: string[]
+  risks: Array<{
+    code: string
+    message: string
+  }>
+  estimatedTaskCount: number
+  validation?: {
+    ok: boolean
+    issues: Array<{
+      code: string
+      message: string
+    }>
+  }
+  plan?: {
+    goal: string
+    estimatedStepCount: number
+  }
+  confirmationSummary?: EditTimelineConfirmationSummary
 }
 
 export interface AgentRuntimeContextPartData {
@@ -166,5 +341,6 @@ export type WorkspaceAssistantPartType =
   | 'data-task-submitted'
   | 'data-task-batch-submitted'
   | 'data-plan-run-submitted'
+  | 'data-edit-timeline'
   | 'data-plan'
   | 'data-project-context'

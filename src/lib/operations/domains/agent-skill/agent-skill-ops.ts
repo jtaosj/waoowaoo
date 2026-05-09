@@ -13,7 +13,12 @@ import {
   searchAgentSkills,
 } from '@/lib/agent-skills/registry'
 import type { AgentPlanDraft, AgentPlanValidationResult } from '@/lib/agent-skills/types'
-import type { AgentPlanPartData, ConfirmationRequestPartData, ProjectAgentContext } from '@/lib/project-agent/types'
+import type {
+  AgentPlanPartData,
+  ConfirmationRequestPartData,
+  PlanRunSubmittedPartData,
+  ProjectAgentContext,
+} from '@/lib/project-agent/types'
 import { isConfirmedOperationInput, shouldRequireAssistantConfirmation } from '@/lib/operations/confirmation'
 import { createProjectAgentOperationRegistryForApi } from '@/lib/operations/registry'
 import type {
@@ -419,7 +424,7 @@ export function createAgentSkillOperations(): ProjectAgentOperationRegistryDraft
             issues: validation.issues,
           })
         }
-        return executeAgentPlan({
+        const result = await executeAgentPlan({
           userId: ctx.userId,
           projectId: ctx.projectId,
           episodeId: ctx.context.episodeId || null,
@@ -432,12 +437,21 @@ export function createAgentSkillOperations(): ProjectAgentOperationRegistryDraft
             input: step.input,
           }),
         })
+        const submitted = executePlanOutputSchema.parse(result)
+        writeOperationDataPart<PlanRunSubmittedPartData>(ctx.writer, 'data-plan-run-submitted', {
+          operationId: 'execute_plan',
+          planRunId: submitted.planRunId,
+          status: submitted.status || (submitted.success ? 'running' : 'failed'),
+          executedStepKeys: submitted.executedStepKeys ?? [],
+          waitingTaskId: submitted.waitingTaskId ?? null,
+        })
+        return result
       },
     }),
     invoke_operation: defineOperation({
       id: 'invoke_operation',
       summary: 'Invoke one real operation through a loaded Agent Skill allowlist. This is the only assistant-facing gateway to business operations.',
-      intent: 'act',
+      intent: 'plan',
       effects: EFFECTS_NONE,
       inputSchema: invokeOperationInputSchema,
       outputSchema: z.unknown(),

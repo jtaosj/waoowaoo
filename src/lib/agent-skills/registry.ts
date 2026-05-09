@@ -8,6 +8,7 @@ import { visualContinuitySkill } from '@skills/agent/visual-continuity/manifest'
 import { locationSelectionSkill } from '@skills/agent/location-selection/manifest'
 import { characterSelectionSkill } from '@skills/agent/character-selection/manifest'
 import { audioDirectionSkill } from '@skills/agent/audio-direction/manifest'
+import { editFirstVideoDirectorSkill } from '@skills/agent/edit-first-video-director/manifest'
 import { mediaGenerationSkill } from '@skills/agent/media-generation/manifest'
 import type {
   AgentSkillId,
@@ -25,6 +26,7 @@ const agentSkillManifests = [
   locationSelectionSkill,
   characterSelectionSkill,
   audioDirectionSkill,
+  editFirstVideoDirectorSkill,
   mediaGenerationSkill,
 ] satisfies AgentSkillManifest[]
 

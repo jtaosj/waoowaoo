@@ -3,7 +3,7 @@ import { AbsoluteFill, Sequence, Video, Audio, useCurrentFrame, interpolate } fr
 import { VideoClip, BgmClip, EditorConfig } from '../types/editor.types'
 import { computeClipPositions } from '../utils/time-utils'
 
-interface VideoCompositionProps {
+export interface VideoCompositionProps extends Record<string, unknown> {
     clips: VideoClip[]
     bgmTrack: BgmClip[]
     config: EditorConfig

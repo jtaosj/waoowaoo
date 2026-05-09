@@ -236,12 +236,7 @@ export async function handleVoiceAnalyzeTask(job: Job<TaskJobData>) {
 
   const createdVoiceLines = await prisma.$transaction(async (tx) => {
     const voiceLineModel = tx.projectVoiceLine as unknown as {
-      upsert?: (args: unknown) => Promise<{
-        id: string
-        speaker: string
-        matchedStoryboardId: string | null
-      }>
-      create: (args: unknown) => Promise<{
+      upsert: (args: unknown) => Promise<{
         id: string
         speaker: string
         matchedStoryboardId: string | null
@@ -288,16 +283,7 @@ export async function handleVoiceAnalyzeTask(job: Job<TaskJobData>) {
           matchedStoryboardId: true,
         },
       }
-      const voiceLine = typeof voiceLineModel.upsert === 'function'
-        ? await voiceLineModel.upsert(upsertArgs)
-        : (
-          process.env.NODE_ENV === 'test'
-            ? await voiceLineModel.create({
-              data: upsertArgs.create,
-              select: upsertArgs.select,
-            })
-            : (() => { throw new Error('projectVoiceLine.upsert unavailable') })()
-        )
+      const voiceLine = await voiceLineModel.upsert(upsertArgs)
       created.push(voiceLine)
     }
 

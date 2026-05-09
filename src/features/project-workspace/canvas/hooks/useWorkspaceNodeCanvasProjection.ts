@@ -3,6 +3,8 @@
 import { useMemo } from 'react'
 import type { CSSProperties } from 'react'
 import type { CanvasNodeLayout } from '@/lib/project-canvas/layout/canvas-layout.types'
+import type { EditTimelineAgentContribution, EditTimelinePartData } from '@/lib/project-agent/types'
+import type { ShotNode, TimelineSegment } from '@/lib/edit-timeline/types'
 import type { ProjectClip, ProjectPanel, ProjectShot, ProjectStoryboard } from '@/types/project'
 import type {
   WorkspaceCanvasAssetRef,
@@ -18,16 +20,31 @@ import type {
   WorkspaceCanvasTextLine,
   WorkspaceCanvasVideoDetails,
 } from '../node-canvas-types'
+import {
+  normalizePlayableFinalVideoUrl,
+  type WorkspaceCanvasFinalVideo,
+} from '../final-video'
 
 const STORY_NODE_WIDTH = 820
 const DEFAULT_NODE_WIDTH = 320
 const MEDIA_NODE_WIDTH = 300
 const FINAL_NODE_WIDTH = 340
+const FINAL_NODE_BASE_HEIGHT = 300
+const FINAL_NODE_VIDEO_HEIGHT = 440
+const EDIT_AGENT_NODE_WIDTH = 360
+const EDIT_AGENT_NODE_HEIGHT = 320
+const EDIT_SEGMENT_NODE_WIDTH = 420
+const EDIT_SEGMENT_NODE_HEIGHT = 360
 const DEFAULT_NODE_HEIGHT = 214
 const STORY_NODE_HEIGHT = 440
 const STORY_COLUMN_X = 260
 const COLUMN_GAP = 940
-const ROW_GAP = 248
+const ROW_GAP = 460
+const EDIT_TIMELINE_ROW_Y = 520
+const EDIT_TIMELINE_ROW_GAP = 430
+const EDIT_TIMELINE_DIRECTOR_Y = 640
+const NODE_COLUMN_TOLERANCE_PX = 80
+const NODE_VERTICAL_GAP_PX = 32
 
 interface TranslateValues {
   readonly [key: string]: string | number
@@ -43,6 +60,8 @@ export interface BuildWorkspaceNodeCanvasProjectionInput {
   readonly clips: readonly ProjectClip[]
   readonly storyboards: readonly ProjectStoryboard[]
   readonly shots?: readonly ProjectShot[]
+  readonly editTimelineData?: EditTimelinePartData | null
+  readonly finalVideo?: WorkspaceCanvasFinalVideo | null
   readonly savedLayouts: readonly CanvasNodeLayout[]
   readonly translate: Translate
   readonly onAction?: WorkspaceCanvasNodeActionHandler
@@ -300,6 +319,15 @@ function compactText(value: string | null | undefined, fallback: string): string
   return text.length > 220 ? `${text.slice(0, 220)}...` : text
 }
 
+function formatTimelineTime(ms: number): string {
+  const seconds = ms / 1000
+  return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`
+}
+
+function formatTimelineRange(startMs: number, durationMs: number): string {
+  return `${formatTimelineTime(startMs)} - ${formatTimelineTime(startMs + durationMs)}`
+}
+
 function sortPanels(panels: readonly ProjectPanel[]): ProjectPanel[] {
   return [...panels].sort((a, b) => {
     const aNumber = a.panelNumber ?? a.panelIndex
@@ -376,6 +404,168 @@ function createEdge(id: string, source: string, target: string): WorkspaceCanvas
   }
 }
 
+function resolveOverlappingNodePositions(nodes: readonly WorkspaceCanvasFlowNode[]): WorkspaceCanvasFlowNode[] {
+  const nextNodes = [...nodes]
+  const columnBottoms: Array<{ x: number; bottom: number }> = []
+  const ordered = nodes
+    .map((node, index) => ({ node, index }))
+    .sort((left, right) => (
+      left.node.position.x - right.node.position.x
+      || left.node.position.y - right.node.position.y
+      || left.node.id.localeCompare(right.node.id)
+    ))
+
+  ordered.forEach(({ node, index }) => {
+    const column = columnBottoms.find((item) => Math.abs(item.x - node.position.x) <= NODE_COLUMN_TOLERANCE_PX)
+    const nextY = column ? Math.max(node.position.y, column.bottom + NODE_VERTICAL_GAP_PX) : node.position.y
+    const height = typeof node.data.height === 'number' ? node.data.height : DEFAULT_NODE_HEIGHT
+    if (nextY !== node.position.y) {
+      nextNodes[index] = {
+        ...node,
+        position: {
+          ...node.position,
+          y: nextY,
+        },
+      }
+    }
+    if (column) {
+      column.bottom = Math.max(column.bottom, nextY + height)
+      return
+    }
+    columnBottoms.push({
+      x: node.position.x,
+      bottom: nextY + height,
+    })
+  })
+
+  return nextNodes
+}
+
+function createEditTimelineAgentNode(params: {
+  readonly agent: EditTimelineAgentContribution
+  readonly nodeId?: string
+  readonly episodeId: string
+  readonly phase?: 'dispatch' | 'specialist' | 'synthesis'
+  readonly title?: string
+  readonly eyebrow?: string
+  readonly body?: string
+  readonly summary?: string
+  readonly decision?: string
+  readonly fallbackX: number
+  readonly fallbackY: number
+  readonly zIndex: number
+  readonly savedLayoutByKey: ReadonlyMap<string, CanvasNodeLayout>
+  readonly translate: Translate
+}): WorkspaceCanvasFlowNode {
+  const { agent, episodeId, translate } = params
+  const body = params.body ?? agent.summary
+  const summary = params.summary ?? agent.summary
+  return createNode({
+    id: params.nodeId ?? `edit-agent:${agent.agentId}`,
+    fallbackX: params.fallbackX,
+    fallbackY: params.fallbackY,
+    zIndex: params.zIndex,
+    savedLayoutByKey: params.savedLayoutByKey,
+    data: {
+      kind: 'editTimelineAgent',
+      layoutNodeType: 'editTimelineAgent',
+      targetType: 'episode',
+      targetId: episodeId,
+      title: params.title ?? agent.title,
+      eyebrow: params.eyebrow ?? translate('nodes.editAgent.eyebrow'),
+      body,
+      meta: translate('nodes.editAgent.meta', { count: agent.shotIds.length }),
+      statusLabel: translate('status.ready'),
+      width: EDIT_AGENT_NODE_WIDTH,
+      height: EDIT_AGENT_NODE_HEIGHT,
+      editTimelineAgentDetails: {
+        role: agent.role,
+        phase: params.phase,
+        mission: agent.mission,
+        summary,
+        decision: params.decision,
+        shotIds: agent.shotIds,
+        outputs: agent.outputs,
+      },
+    },
+  })
+}
+
+function shotsForTimelineSegment(segment: TimelineSegment, shots: readonly ShotNode[]): ShotNode[] {
+  const byId = new Map(shots.map((shot) => [shot.id, shot]))
+  const fromSegmentOrder = segment.shotIds.flatMap((shotId) => {
+    const shot = byId.get(shotId)
+    return shot ? [shot] : []
+  })
+  if (fromSegmentOrder.length > 0) return fromSegmentOrder
+  return shots.filter((shot) => shot.segmentId === segment.id).sort((a, b) => a.order - b.order)
+}
+
+function stringFieldFromRecord(value: unknown, key: string): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const fieldValue = (value as Record<string, unknown>)[key]
+  return typeof fieldValue === 'string' && fieldValue.trim() ? fieldValue : null
+}
+
+function resolveEditTimelineShotVisual(shot: ShotNode, translate: Translate): string {
+  return shot.editorial?.visual
+    ?? stringFieldFromRecord(shot, 'visual')
+    ?? shot.control?.prompt
+    ?? translate('empty.video')
+}
+
+function createEditTimelineSegmentNode(params: {
+  readonly segment: TimelineSegment
+  readonly timelineShots: readonly ShotNode[]
+  readonly episodeId: string
+  readonly fallbackX: number
+  readonly fallbackY: number
+  readonly zIndex: number
+  readonly savedLayoutByKey: ReadonlyMap<string, CanvasNodeLayout>
+  readonly translate: Translate
+}): WorkspaceCanvasFlowNode {
+  const { segment, timelineShots, episodeId, translate } = params
+  const segmentShots = shotsForTimelineSegment(segment, timelineShots)
+  const startLabel = formatTimelineTime(segment.startMs)
+  const endLabel = formatTimelineTime(segment.startMs + segment.durationMs)
+  return createNode({
+    id: `edit-segment:${segment.id}`,
+    fallbackX: params.fallbackX,
+    fallbackY: params.fallbackY,
+    zIndex: params.zIndex,
+    savedLayoutByKey: params.savedLayoutByKey,
+    data: {
+      kind: 'editTimelineSegment',
+      layoutNodeType: 'editTimelineSegment',
+      targetType: 'episode',
+      targetId: episodeId,
+      title: segment.label,
+      eyebrow: translate('nodes.editSegment.eyebrow', { range: formatTimelineRange(segment.startMs, segment.durationMs) }),
+      body: segment.intent,
+      meta: translate('nodes.editSegment.meta', { count: segmentShots.length }),
+      statusLabel: translate('status.ready'),
+      width: EDIT_SEGMENT_NODE_WIDTH,
+      height: EDIT_SEGMENT_NODE_HEIGHT,
+      editTimelineSegmentDetails: {
+        startLabel,
+        endLabel,
+        durationLabel: formatTimelineTime(segment.durationMs),
+        intent: segment.intent,
+        shots: segmentShots.map((shot) => ({
+          id: shot.id,
+          title: shot.title,
+          timeLabel: formatTimelineRange(shot.startMs, shot.durationMs),
+          goal: shot.goal,
+          visual: resolveEditTimelineShotVisual(shot, translate),
+          story: shot.editorial?.story ?? shot.goal,
+          sound: shot.editorial?.sound ?? null,
+          caption: shot.editorial?.caption ?? null,
+        })),
+      },
+    },
+  })
+}
+
 function hasImage(panel: ProjectPanel): boolean {
   return Boolean(
     panel.imageUrl ||
@@ -422,6 +612,8 @@ export function buildWorkspaceNodeCanvasProjection({
   clips,
   storyboards,
   shots = [],
+  editTimelineData = null,
+  finalVideo = null,
   savedLayouts,
   translate,
   onAction,
@@ -431,7 +623,7 @@ export function buildWorkspaceNodeCanvasProjection({
   const edges: WorkspaceCanvasFlowEdge[] = []
   let zIndex = 0
 
-  const storyBody = storyText.trim()
+  const storyBody = (storyText.trim() || editTimelineData?.sourceStory?.trim() || '')
   const storyNodeId = `story:${episodeId}`
   nodes.push(createNode({
     id: storyNodeId,
@@ -486,6 +678,108 @@ export function buildWorkspaceNodeCanvasProjection({
       },
     }))
     edges.push(createEdge('edge:story-analysis', storyNodeId, analysisNodeId))
+  }
+
+  if (editTimelineData) {
+    const editTimelineSourceNodeId = hasStory ? analysisNodeId : storyNodeId
+    const director = editTimelineData.agentCrew?.director
+    const subagents = editTimelineData.agentCrew?.subagents ?? []
+    const dispatchDirectorNodeId = director ? `edit-agent:${director.agentId}:dispatch` : null
+    const synthesisDirectorNodeId = director ? `edit-agent:${director.agentId}:synthesis` : null
+
+    if (director && dispatchDirectorNodeId) {
+      nodes.push(createEditTimelineAgentNode({
+        agent: director,
+        nodeId: dispatchDirectorNodeId,
+        episodeId,
+        phase: 'dispatch',
+        title: translate('nodes.editAgent.dispatchTitle', { title: director.title }),
+        eyebrow: translate('nodes.editAgent.dispatchEyebrow'),
+        body: director.mission,
+        summary: director.summary,
+        decision: translate('nodes.editAgent.dispatchDecision'),
+        fallbackX: STORY_COLUMN_X + COLUMN_GAP * 2,
+        fallbackY: EDIT_TIMELINE_DIRECTOR_Y,
+        zIndex: zIndex++,
+        savedLayoutByKey,
+        translate,
+      }))
+      edges.push(createEdge(`edge:${editTimelineSourceNodeId}-${dispatchDirectorNodeId}`, editTimelineSourceNodeId, dispatchDirectorNodeId))
+    }
+
+    const subagentSourceNodeId = dispatchDirectorNodeId ?? editTimelineSourceNodeId
+    subagents.forEach((agent, index) => {
+      const agentNodeId = `edit-agent:${agent.agentId}`
+      nodes.push(createEditTimelineAgentNode({
+        agent,
+        episodeId,
+        phase: 'specialist',
+        fallbackX: STORY_COLUMN_X + COLUMN_GAP * (director ? 3 : 2),
+        fallbackY: EDIT_TIMELINE_ROW_Y + index * EDIT_TIMELINE_ROW_GAP,
+        zIndex: zIndex++,
+        savedLayoutByKey,
+        translate,
+      }))
+      edges.push(createEdge(`edge:${subagentSourceNodeId}-${agentNodeId}`, subagentSourceNodeId, agentNodeId))
+    })
+
+    if (director && synthesisDirectorNodeId) {
+      const synthesisSummary = editTimelineData.agentCrew?.synthesis ?? director.summary
+      nodes.push(createEditTimelineAgentNode({
+        agent: director,
+        nodeId: synthesisDirectorNodeId,
+        episodeId,
+        phase: 'synthesis',
+        title: translate('nodes.editAgent.synthesisTitle', { title: director.title }),
+        eyebrow: translate('nodes.editAgent.synthesisEyebrow'),
+        body: synthesisSummary,
+        summary: synthesisSummary,
+        decision: translate('nodes.editAgent.synthesisDecision'),
+        fallbackX: STORY_COLUMN_X + COLUMN_GAP * (subagents.length > 0 ? 4 : 3),
+        fallbackY: subagents.length > 0 ? EDIT_TIMELINE_DIRECTOR_Y : EDIT_TIMELINE_ROW_Y,
+        zIndex: zIndex++,
+        savedLayoutByKey,
+        translate,
+      }))
+      if (subagents.length > 0) {
+        subagents.forEach((agent) => {
+          edges.push(createEdge(`edge:edit-agent:${agent.agentId}-${synthesisDirectorNodeId}`, `edit-agent:${agent.agentId}`, synthesisDirectorNodeId))
+        })
+      } else if (dispatchDirectorNodeId) {
+        edges.push(createEdge(`edge:${dispatchDirectorNodeId}-${synthesisDirectorNodeId}`, dispatchDirectorNodeId, synthesisDirectorNodeId))
+      }
+    }
+
+    const segmentSourceNodeIds = synthesisDirectorNodeId
+      ? [synthesisDirectorNodeId]
+      : subagents.length > 0
+        ? subagents.map((agent) => `edit-agent:${agent.agentId}`)
+        : [editTimelineSourceNodeId]
+    const segmentColumn = synthesisDirectorNodeId
+      ? (subagents.length > 0 ? 5 : 4)
+      : (subagents.length > 0 ? 3 : 2)
+
+    const orderedTimelineSegments = [...editTimelineData.timeline.segments]
+      .sort((left, right) => left.startMs - right.startMs)
+    let previousSegmentNodeId: string | null = null
+    orderedTimelineSegments.forEach((segment, index) => {
+      const segmentNodeId = `edit-segment:${segment.id}`
+      nodes.push(createEditTimelineSegmentNode({
+        segment,
+        timelineShots: editTimelineData.timeline.shots,
+        episodeId,
+        fallbackX: STORY_COLUMN_X + COLUMN_GAP * segmentColumn,
+        fallbackY: EDIT_TIMELINE_ROW_Y + index * EDIT_TIMELINE_ROW_GAP,
+        zIndex: zIndex++,
+        savedLayoutByKey,
+        translate,
+      }))
+      const sourceNodeIds = previousSegmentNodeId ? [previousSegmentNodeId] : segmentSourceNodeIds
+      sourceNodeIds.forEach((sourceNodeId) => {
+        edges.push(createEdge(`edge:${sourceNodeId}-${segmentNodeId}`, sourceNodeId, segmentNodeId))
+      })
+      previousSegmentNodeId = segmentNodeId
+    })
   }
 
   const clipOrder = new Map(clips.map((clip, index) => [clip.id, index]))
@@ -650,6 +944,7 @@ export function buildWorkspaceNodeCanvasProjection({
     const finalNodeId = `final:${episodeId}`
     const totalDuration = panelsWithStoryboard.reduce((total, item) => total + (item.panel.duration ?? 0), 0)
     const imageCount = panelsWithStoryboard.filter((item) => hasImage(item.panel)).length
+    const finalVideoUrl = normalizePlayableFinalVideoUrl(finalVideo?.url)
     nodes.push(createNode({
       id: finalNodeId,
       fallbackX: STORY_COLUMN_X + COLUMN_GAP * 6,
@@ -667,13 +962,19 @@ export function buildWorkspaceNodeCanvasProjection({
         meta: translate('nodes.final.meta'),
         statusLabel: translate('status.ready'),
         width: FINAL_NODE_WIDTH,
-        height: 280,
+        height: finalVideoUrl ? FINAL_NODE_VIDEO_HEIGHT : FINAL_NODE_BASE_HEIGHT,
         finalDetails: {
           totalShots: panelsWithStoryboard.length,
           totalImages: imageCount,
           totalVideos: videoNodeIds.length,
           totalDuration: totalDuration > 0 ? totalDuration : null,
           orderedVideoLabels: videoNodeIds.map((videoNodeId) => videoNodeId.replace('video:', '')),
+          finalVideo: finalVideo
+            ? {
+                ...finalVideo,
+                url: finalVideoUrl ?? finalVideo.url,
+              }
+            : null,
         },
         actionLabel: translate('actions.generateAllVideos'),
         action: { type: 'generate_all_videos' },
@@ -685,7 +986,7 @@ export function buildWorkspaceNodeCanvasProjection({
     })
   }
 
-  return { nodes, edges }
+  return { nodes: resolveOverlappingNodePositions(nodes), edges }
 }
 
 export function useWorkspaceNodeCanvasProjection({
@@ -696,6 +997,8 @@ export function useWorkspaceNodeCanvasProjection({
   clips,
   storyboards,
   shots,
+  editTimelineData,
+  finalVideo,
   savedLayouts,
   translate,
   onAction,
@@ -709,6 +1012,8 @@ export function useWorkspaceNodeCanvasProjection({
       clips,
       storyboards,
       shots,
+      editTimelineData,
+      finalVideo,
       savedLayouts,
       translate,
       onAction,
@@ -723,6 +1028,8 @@ export function useWorkspaceNodeCanvasProjection({
       shots,
       storyText,
       storyboards,
+      editTimelineData,
+      finalVideo,
       translate,
     ],
   )

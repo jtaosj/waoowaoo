@@ -19,6 +19,7 @@ import { normalizeAnyError } from '@/lib/errors/normalize'
 import { rollbackTaskBilling, settleTaskBilling } from '@/lib/billing'
 import { withTextUsageCollection } from '@/lib/billing/runtime-usage'
 import { onProjectNameAvailable } from '@/lib/logging/file-writer'
+import { resumePlanRunsForTerminalTask } from '@/lib/plan-run-runtime/task-completion'
 import type { NormalizedError } from '@/lib/errors/types'
 
 function toObject(value: unknown): Record<string, unknown> {
@@ -358,6 +359,17 @@ export async function withTaskLifecycle(job: Job<TaskJobData>, handler: (job: Jo
         }),
       },
     })
+    const resumeResult = await resumePlanRunsForTerminalTask({
+      taskId,
+      locale: data.locale,
+    })
+    if (resumeResult.resumedRuns.length > 0) {
+      logger.info({
+        action: 'worker.plan_run_resume.completed',
+        message: 'resumed plan runs after completed task',
+        details: resumeResult,
+      })
+    }
   } catch (error: unknown) {
     if (error instanceof TaskTerminatedError) {
       if (billingInfo?.billable) {
@@ -529,6 +541,17 @@ export async function withTaskLifecycle(job: Job<TaskJobData>, handler: (job: Jo
         }),
       },
     })
+    const resumeResult = await resumePlanRunsForTerminalTask({
+      taskId,
+      locale: data.locale,
+    })
+    if (resumeResult.resumedRuns.length > 0) {
+      logger.info({
+        action: 'worker.plan_run_resume.failed_task',
+        message: 'resumed plan runs after failed task',
+        details: resumeResult,
+      })
+    }
 
     // Re-throw as UnrecoverableError so BullMQ records the job as failed
     // (without this, BullMQ thinks the job succeeded and never logs failure)

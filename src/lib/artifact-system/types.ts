@@ -19,6 +19,7 @@ export const ARTIFACT_TYPES = {
   PANEL_PROMPT: 'panel.prompt',
   PANEL_IMAGE: 'panel.image',
   PANEL_VIDEO: 'panel.video',
+  FINAL_VIDEO: 'final.video',
 } as const
 
 export type ArtifactType = (typeof ARTIFACT_TYPES)[keyof typeof ARTIFACT_TYPES]

@@ -151,6 +151,193 @@ describe('project assistant chat route', () => {
     }))
   })
 
+  it('POST /api/projects/[projectId]/assistant/chat -> restores persisted edit timeline context for short generation confirmations', async () => {
+    const persistedEditTimelinePart = {
+      type: 'data-edit-timeline',
+      data: {
+        timeline: {
+          id: 'timeline-1',
+          title: '通用创作计划',
+          aspectRatio: '9:16',
+          segments: [],
+          shots: [],
+          references: [],
+          metadata: {},
+        },
+        agentCrew: {
+          director: {
+            agentId: 'main-director',
+            role: 'main-director',
+            title: 'Project Agent',
+            mission: '综合创作目标并管理子 Agent。',
+            summary: '已拆解工作。',
+            shotIds: [],
+            outputs: [],
+            status: 'drafted',
+          },
+          subagents: [],
+          synthesis: '等待确认后提交真实生成。',
+        },
+        unresolvedRefs: [],
+        risks: [],
+        estimatedTaskCount: 1,
+      },
+    }
+    persistenceMock.loadProjectAssistantThread.mockResolvedValueOnce({
+      id: 'thread-1',
+      assistantId: 'workspace-command',
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      scopeRef: 'episode:episode-1',
+      messages: [
+        {
+          id: 'assistant-edit-timeline',
+          role: 'assistant',
+          parts: [persistedEditTimelinePart],
+        },
+      ],
+      createdAt: '2026-04-13T00:00:00.000Z',
+      updatedAt: '2026-04-13T00:00:00.000Z',
+    })
+
+    const response = await chatPost(
+      buildMockRequest({
+        path: '/api/projects/project-1/assistant/chat',
+        method: 'POST',
+        body: {
+          messages: [
+            {
+              id: 'user-confirm-generation',
+              role: 'user',
+              parts: [{ type: 'text', text: '生成视频' }],
+            },
+          ],
+          context: {
+            locale: 'zh',
+            episodeId: 'episode-1',
+          },
+        },
+      }),
+      { params: Promise.resolve({ projectId: 'project-1' }) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(persistenceMock.loadProjectAssistantThread).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      userId: 'user-1',
+      episodeId: 'episode-1',
+      assistantId: 'workspace-command',
+    })
+    expect(projectAgentMock.createProjectAgentChatResponse).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [
+        {
+          id: 'assistant-edit-timeline',
+          role: 'assistant',
+          parts: [persistedEditTimelinePart],
+        },
+        {
+          id: 'user-confirm-generation',
+          role: 'user',
+          parts: [{ type: 'text', text: '生成视频' }],
+        },
+      ],
+    }))
+  })
+
+  it('POST /api/projects/[projectId]/assistant/chat -> saves the merged request snapshot before streaming', async () => {
+    const persistedMessage = {
+      id: 'assistant-edit-timeline',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'data-edit-timeline',
+          data: {
+            timeline: {
+              id: 'timeline-1',
+              title: '剪辑先行计划',
+              aspectRatio: '9:16',
+              segments: [],
+              shots: [],
+              references: [],
+              metadata: {},
+            },
+            agentCrew: {
+              director: {
+                agentId: 'main-director',
+                role: 'main-director',
+                title: 'Main Director',
+                mission: '动态拆分用户故事。',
+                summary: '已生成初稿。',
+                shotIds: [],
+                outputs: [],
+                status: 'drafted',
+              },
+              subagents: [],
+              synthesis: '等待用户确认。',
+            },
+            unresolvedRefs: [],
+            risks: [],
+            estimatedTaskCount: 1,
+          },
+        },
+      ],
+    }
+    const incomingMessage = {
+      id: 'user-natural-film-story',
+      role: 'user',
+      parts: [
+        {
+          type: 'text',
+          text: '帮我把这个故事拍成15秒竖屏短片：末班地铁里，一个女孩发现窗外倒影比她慢半拍。',
+        },
+      ],
+    }
+    persistenceMock.loadProjectAssistantThread.mockResolvedValueOnce({
+      id: 'thread-1',
+      assistantId: 'workspace-command',
+      projectId: 'project-1',
+      episodeId: 'episode-1',
+      scopeRef: 'episode:episode-1',
+      messages: [persistedMessage],
+      createdAt: '2026-04-13T00:00:00.000Z',
+      updatedAt: '2026-04-13T00:00:00.000Z',
+    })
+
+    const response = await chatPost(
+      buildMockRequest({
+        path: '/api/projects/project-1/assistant/chat',
+        method: 'POST',
+        body: {
+          messages: [incomingMessage],
+          context: {
+            locale: 'zh',
+            episodeId: 'episode-1',
+          },
+        },
+      }),
+      { params: Promise.resolve({ projectId: 'project-1' }) },
+    )
+
+    expect(response.status).toBe(200)
+    expect(persistenceMock.saveProjectAssistantThread).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      userId: 'user-1',
+      episodeId: 'episode-1',
+      assistantId: 'workspace-command',
+      messages: [persistedMessage, incomingMessage],
+    })
+    expect(threadLogMock.writeWorkspaceAssistantThreadLog).toHaveBeenCalledTimes(1)
+    expect(projectAgentMock.createProjectAgentChatResponse).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [persistedMessage, incomingMessage],
+    }))
+    const saveCallOrder = persistenceMock.saveProjectAssistantThread.mock.invocationCallOrder[0]
+    const runtimeCallOrder = projectAgentMock.createProjectAgentChatResponse.mock.invocationCallOrder[0]
+    if (saveCallOrder === undefined || runtimeCallOrder === undefined) {
+      throw new Error('expected save and runtime calls to be recorded')
+    }
+    expect(saveCallOrder).toBeLessThan(runtimeCallOrder)
+  })
+
   it('POST /api/projects/[projectId]/assistant/chat -> forwards compressed messages when long conversation threshold is hit', async () => {
     compressionState.shouldCompress = true
     compressionState.compressedMessages = [

@@ -84,7 +84,7 @@ describe('project agent operation registry', () => {
     expect(registry.load_skill?.intent).toBe('query')
     expect(registry.create_plan?.intent).toBe('plan')
     expect(registry.validate_plan?.intent).toBe('plan')
-    expect(registry.invoke_operation?.intent).toBe('act')
+    expect(registry.invoke_operation?.intent).toBe('plan')
 
     for (const operationId of ['search_skills', 'load_skill', 'create_plan', 'validate_plan', 'invoke_operation']) {
       expect(registry[operationId]?.effects).toEqual({

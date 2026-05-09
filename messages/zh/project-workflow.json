@@ -162,6 +162,7 @@
     "scriptToStoryboardFailed": "剧本转分镜失败",
     "assistantPlanRequired": "请在右侧 AI 助手中描述目标，让助手自由判断下一步。",
     "assistantPlanRequest": "请读取当前项目上下文里的故事内容，然后自由判断下一步该怎么做。你可以搜索并加载合适的 Skill，创建并校验计划；如果需要写入、长任务或计费操作，请先请求确认。",
+    "assistantPlanRequestEditFirstVideo": "请使用当前自然语言故事输入强制走剪辑先行 subagent 视频时间线流程。用户不需要说 agent、tool、operation、blackboard 或剪辑先行；你必须在内部先 search_skills 并 load_skill: edit-first-video-director，然后通过 invoke_operation 依次运行 create_edit_timeline_plan、validate_edit_timeline、compile_edit_timeline。create_edit_timeline_plan 的 goal 必须使用下面的故事原文，不要用本段指令当故事；如果故事里写了时长、画幅、镜头数，必须原样传入或显式推断。先输出可见 EditTimelineBlackboard 和时间线给我确认；黑板必须包含 Main Director 动态生成的 Macro Script、每个 segment 的小黑板，以及 Screenplay、Cinematography、Continuity、Prompt Engineer、Sound、Provider Production、Film Critic 七个 specialist subagent 的 owner/status/contribution；每个 segment/shot 必须有 dependencies、prompt package、provider policy、quality/redo reason。没有 final.video evidence 时，Film Critic 只能展示 pending 或 blocked 状态，不能展示成功分数。compile_edit_timeline 必须传入 create_edit_timeline_plan 返回的原始 blackboard，让 provider 输入来自 segment blackboard 的 prompt package；如果黑板覆盖缺失，必须显式报告 blocker，不准 timeline-only 编译。除非我确认，不要提交 provider 或执行计费长任务。\n\n故事原文：\n{story}",
     "taskStreamTimeout": "任务执行超时，请检查任务是否仍在运行，或重新触发"
   },
   "rebuildConfirm": {
@@ -313,11 +314,29 @@
         "lastOptions": "上次生成参数",
         "lipSyncError": "口型错误",
         "finalStats": "成片统计",
+        "finalVideo": "最终视频",
+        "finalVideoPlayer": "最终成片播放器",
+        "finalVideoPending": "最终视频正在生成中，完成后会在这里直接播放。",
+        "finalVideoFailed": "最终视频生成失败，请查看工作台对话里的错误原因。",
+        "finalVideoUnavailable": "还没有可播放的最终视频地址。",
+        "openFinalVideo": "新窗口打开视频",
         "totalShots": "总镜头",
         "totalImages": "图片",
         "totalVideos": "视频",
         "totalDuration": "总时长",
         "videoOrder": "视频顺序",
+        "timelineDecision": "时间线决策",
+        "mission": "任务",
+        "agentSummary": "Agent 结果",
+        "assignedShots": "负责镜头",
+        "agentOutputs": "输出",
+        "timelineIntent": "时间段目标",
+        "timelineShots": "时间段镜头",
+        "shotGoal": "目标",
+        "visual": "画面",
+        "timelineStory": "剧情",
+        "sound": "声音",
+        "caption": "字幕",
         "yes": "是",
         "lineKind": {
           "action": "动作",
@@ -337,6 +356,7 @@
           "imageGeneration": "图片生成 / 编辑",
           "videoPreview": "视频预览",
           "videoControls": "视频控制",
+          "finalVideo": "最终视频",
           "finalStats": "成片统计",
           "timelineOrder": "时间线顺序",
           "storyInput": "故事输入",
@@ -414,7 +434,8 @@
           "generateVideo": "生成视频",
           "generateFirstLastVideo": "首尾帧生成",
           "generateAllVideos": "批量生成视频",
-          "downloadVideos": "下载视频"
+          "downloadVideos": "下载视频",
+          "openFinalVideo": "新窗口打开最终视频"
         },
         "defaults": {
           "variantTitle": "镜头变体"
@@ -449,7 +470,12 @@
         "messages": {
           "referenceSelection": "已选择 {count} 张参考图，可包含分镜、角色、场景、道具、URL、上传或粘贴图片。",
           "noNextPanelForFirstLast": "当前镜头后面没有下一个镜头，无法使用首尾帧模式。",
-          "finalExportUnavailable": "AI 剪辑和最终成片导出本轮不接入。"
+          "finalExportUnavailable": "最终视频未完成，或当前只有不可直接播放的引用。",
+          "finalVideoReady": "最终视频已生成，可直接预览或新窗口打开。",
+          "finalVideoPlayer": "最终成片播放器",
+          "finalVideoPending": "最终视频正在生成中，完成后会在这里直接播放。",
+          "finalVideoFailed": "最终视频生成失败，请查看工作台对话里的错误原因。",
+          "finalVideoUnavailable": "还没有可播放的最终视频地址。"
         },
         "status": {
           "videoReady": "已生成",
@@ -465,6 +491,7 @@
           "totalVideos": "{count} 个视频",
           "missingVideos": "{count} 个缺失",
           "totalDuration": "{count} 秒",
+          "renderStatus": "渲染状态：{status}",
           "characters": "{count} 个角色引用",
           "locations": "{count} 个场景引用",
           "props": "{count} 个道具引用"
@@ -510,6 +537,20 @@
           "eyebrow": "最终输出",
           "body": "{videos} 个视频片段已进入成片链路。",
           "meta": "顺序来自业务数据"
+        },
+        "editAgent": {
+          "eyebrow": "Agent 分工",
+          "dispatchEyebrow": "主 Agent 拆解",
+          "synthesisEyebrow": "主 Agent 整合",
+          "dispatchTitle": "{title} · 拆解",
+          "synthesisTitle": "{title} · 整合",
+          "dispatchDecision": "主 Agent 根据客户原文、目标时长、已有 outline 和情绪转折先决定时间线切分，再把每个镜头分发给画面、剧情、声音、字幕 Agent。",
+          "synthesisDecision": "主 Agent 收回专业 Agent 输出，检查时间顺序、情绪推进、镜头目的和生成可执行性，再输出最终顺序剧情时间线。",
+          "meta": "覆盖 {count} 个镜头"
+        },
+        "editSegment": {
+          "eyebrow": "{range}",
+          "meta": "{count} 个镜头"
         }
       }
     }

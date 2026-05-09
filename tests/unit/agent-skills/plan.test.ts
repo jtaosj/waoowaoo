@@ -53,6 +53,31 @@ describe('agent plan validation', () => {
     ])
   })
 
+  it('rejects direct media generation from edit-first video director plans', () => {
+    const result = validateAgentPlan({
+      goal: '剪辑先行生成 15 秒反转短剧',
+      loadedSkillIds: ['edit-first-video-director'],
+      steps: [
+        {
+          stepKey: 'direct_video',
+          skillId: 'edit-first-video-director',
+          operationId: 'generate_panel_video',
+          reason: '跳过时间线直接生成视频',
+          requiresApproval: true,
+        },
+      ],
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: 'OPERATION_NOT_ALLOWED_BY_SKILL',
+        stepKey: 'direct_video',
+        operationId: 'generate_panel_video',
+      }),
+    ])
+  })
+
   it('rejects fixed workflow references', () => {
     const fixedWorkflowOperationId = ['run', 'workflow', 'package'].join('_')
     const result = validateAgentPlan({

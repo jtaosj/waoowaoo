@@ -1,4 +1,5 @@
 import { createScopedLogger } from '@/lib/logging/core'
+import { createSignedStorageRoutePath } from '@/lib/storage/access-token'
 import { createStorageProvider } from '@/lib/storage/factory'
 import type { DeleteObjectsResult, StorageProvider } from '@/lib/storage/types'
 import { DEFAULT_SIGNED_URL_EXPIRES_SECONDS, withRetry } from '@/lib/storage/utils'
@@ -77,10 +78,18 @@ export async function getSignedObjectUrl(key: string, expiresInSeconds: number =
 export function getSignedUrl(key: string, expiresInSeconds: number = DEFAULT_SIGNED_URL_EXPIRES_SECONDS): string {
   const provider = getStorageProvider()
   if (provider.kind === 'local') {
-    return `/api/files/${encodeURIComponent(key)}`
+    return createSignedStorageRoutePath({
+      route: 'files',
+      key,
+      expiresInSeconds,
+    })
   }
 
-  return `/api/storage/sign?key=${encodeURIComponent(key)}&expires=${encodeURIComponent(String(expiresInSeconds))}`
+  return createSignedStorageRoutePath({
+    route: 'storage-sign',
+    key,
+    expiresInSeconds,
+  })
 }
 
 export function getSignedUrls(keys: string[], expiresInSeconds: number = DEFAULT_SIGNED_URL_EXPIRES_SECONDS): string[] {

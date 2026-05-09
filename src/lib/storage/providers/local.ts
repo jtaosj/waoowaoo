@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { createSignedStorageRoutePath } from '@/lib/storage/access-token'
 import type { DeleteObjectsResult, SignedUrlParams, StorageProvider, UploadObjectParams, UploadObjectResult } from '@/lib/storage/types'
 import { normalizeKey, toFetchableUrl } from '@/lib/storage/utils'
 
@@ -49,8 +50,11 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   async getSignedObjectUrl(params: SignedUrlParams): Promise<string> {
-    void params.expiresInSeconds
-    return `/api/files/${encodeURIComponent(normalizeKey(params.key))}`
+    return createSignedStorageRoutePath({
+      route: 'files',
+      key: normalizeKey(params.key),
+      expiresInSeconds: params.expiresInSeconds,
+    })
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {

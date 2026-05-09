@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useLocale, useTranslations } from 'next-intl'
 import AiWriteModal from '@/components/home/AiWriteModal'
 import LongTextDetectionPrompt from '@/components/story-input/LongTextDetectionPrompt'
@@ -77,6 +77,10 @@ export default function StoryDetail({ projectId, storyText, episodeName, variant
     })),
     [],
   )
+
+  useEffect(() => {
+    setDraft(storyText)
+  }, [storyText])
 
   const saveStory = async (value: string) => {
     setDraft(value)

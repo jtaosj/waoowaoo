@@ -4,14 +4,18 @@ import { z } from 'zod'
 import { createAgentSkillOperations } from '@/lib/operations/domains/agent-skill/agent-skill-ops'
 import type { ProjectAgentOperationContext } from '@/lib/operations/types'
 
-const executeAgentPlanMock = vi.hoisted(() => vi.fn(async (_params: {
-  userId: string
-  projectId: string
-  episodeId?: string | null
-  planId?: string | null
-  input: unknown
-  invokeStep: unknown
-}) => ({
+interface ExecuteAgentPlanMockResult {
+  success: boolean
+  planRunId: string
+  status?: string
+  executedStepKeys?: string[]
+  waitingTaskId?: string | null
+  failedStepKey?: string
+  error?: unknown
+  snapshot: unknown
+}
+
+const executeAgentPlanMock = vi.hoisted(() => vi.fn(async (): Promise<ExecuteAgentPlanMockResult> => ({
   success: true,
   planRunId: 'plan-run-1',
   status: 'completed',
@@ -91,6 +95,31 @@ describe('agent skill operations', () => {
     expect(result.skill.operations.map((operation) => operation.id)).toContain('confirm_location_selection')
   })
 
+  it('load_skill exposes edit-first timeline and production-bridge operations without direct media generation', async () => {
+    const operations = createAgentSkillOperations()
+    const raw = await operations.load_skill.execute(buildContext(), {
+      skillId: 'edit-first-video-director',
+    })
+    const result = loadSkillOutputSchema.parse(raw)
+
+    expect(result.skill.instructions).toContain('EditTimeline')
+    expect(result.skill.instructions).toContain('EditTimelineBlackboard')
+    expect(result.skill.instructions).toContain('Macro Script')
+    expect(result.skill.instructions).toContain('Segment Blackboard')
+    expect(result.skill.instructions).toContain('Always pass the exact `blackboard`')
+    expect(result.skill.operations.map((operation) => operation.id)).toEqual([
+      'create_edit_timeline_plan',
+      'validate_edit_timeline',
+      'compile_edit_timeline',
+      'start_edit_timeline_production_run',
+      'materialize_edit_timeline_storyboard',
+      'assemble_timeline_video',
+      'score_edit_timeline_trace',
+      'redo_timeline_shot',
+    ])
+    expect(result.skill.operations.map((operation) => operation.id)).not.toContain('generate_panel_video')
+  })
+
   it('create_plan emits data-plan and rejects fixed workflow references through validation', async () => {
     const writerEvents: Array<Record<string, unknown>> = []
     const operations = createAgentSkillOperations()
@@ -156,6 +185,102 @@ describe('agent skill operations', () => {
         draftPlanId: 'draft_plan_1',
       }),
     }))
+  })
+
+  it('execute_plan emits a live PlanRun card data part when it starts waiting on a task', async () => {
+    executeAgentPlanMock.mockResolvedValueOnce({
+      success: true,
+      planRunId: 'plan-run-waiting',
+      status: 'waiting_task',
+      executedStepKeys: ['analyze_story'],
+      waitingTaskId: 'task-waiting-1',
+      snapshot: {
+        planRun: {
+          id: 'plan-run-waiting',
+          planId: null,
+        },
+      },
+    })
+    const writerEvents: Array<Record<string, unknown>> = []
+    const operations = createAgentSkillOperations()
+
+    await operations.execute_plan.execute(buildContext(writerEvents), {
+      goal: '分析小说并生成短剧脚本。',
+      loadedSkillIds: ['screenwriting'],
+      confirmed: true,
+      steps: [
+        {
+          stepKey: 'analyze_story',
+          skillId: 'screenwriting',
+          operationId: 'write_screenplay',
+          reason: '分析当前项目故事内容。',
+          requiresApproval: true,
+        },
+      ],
+    })
+
+    expect(writerEvents).toEqual([
+      expect.objectContaining({
+        type: 'data-plan-run-submitted',
+        data: {
+          operationId: 'execute_plan',
+          planRunId: 'plan-run-waiting',
+          status: 'waiting_task',
+          executedStepKeys: ['analyze_story'],
+          waitingTaskId: 'task-waiting-1',
+        },
+      }),
+    ])
+  })
+
+  it('validate_plan accepts final video assembly artifacts', async () => {
+    const operations = createAgentSkillOperations()
+
+    const raw = await operations.validate_plan.execute(buildContext(), {
+      goal: '拼接三段真实镜头并生成最终视频。',
+      loadedSkillIds: ['edit-first-video-director', 'media-generation'],
+      steps: [
+        {
+          stepKey: 'shot_01_materialize',
+          skillId: 'media-generation',
+          operationId: 'generate_panel_video',
+          reason: '真实生成第一个镜头视频。',
+          outputArtifacts: ['panel.video'],
+          requiresApproval: true,
+        },
+        {
+          stepKey: 'shot_02_materialize',
+          skillId: 'media-generation',
+          operationId: 'generate_panel_video',
+          reason: '真实生成第二个镜头视频。',
+          outputArtifacts: ['panel.video'],
+          requiresApproval: true,
+        },
+        {
+          stepKey: 'shot_03_materialize',
+          skillId: 'media-generation',
+          operationId: 'generate_panel_video',
+          reason: '真实生成第三个镜头视频。',
+          outputArtifacts: ['panel.video'],
+          requiresApproval: true,
+        },
+        {
+          stepKey: 'assemble_final_video',
+          skillId: 'edit-first-video-director',
+          operationId: 'assemble_timeline_video',
+          reason: '拼接已完成的 panel 视频，产出最终可播放视频。',
+          inputArtifacts: ['panel.video'],
+          outputArtifacts: ['final.video'],
+          dependsOn: ['shot_01_materialize', 'shot_02_materialize', 'shot_03_materialize'],
+          requiresApproval: true,
+        },
+      ],
+    })
+
+    expect(raw).toMatchObject({
+      ok: true,
+      issues: [],
+    })
   })
 
   it('invoke_operation requests confirmation through the gateway operation', async () => {

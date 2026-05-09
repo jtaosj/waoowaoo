@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ApiError } from '@/lib/api-errors'
+import { prisma } from '@/lib/prisma'
 import {
   createPlanRun,
   getPlanRunById,
@@ -60,6 +61,24 @@ function normalizeStatuses(values: string[]): PlanRunStatus[] {
     if (!next.includes(normalized)) next.push(normalized)
   }
   return next
+}
+
+async function assertUserOwnsPlanRunProject(params: { projectId: string; userId: string }): Promise<void> {
+  const project = await prisma.project.findFirst({
+    where: {
+      id: params.projectId,
+      userId: params.userId,
+    },
+    select: { id: true },
+  })
+
+  if (!project) {
+    throw new ApiError('NOT_FOUND', {
+      code: 'PROJECT_NOT_FOUND',
+      field: 'projectId',
+      message: 'project not found',
+    })
+  }
 }
 
 export function createPlanRunOperations(): ProjectAgentOperationRegistryDraft {
@@ -131,6 +150,11 @@ export function createPlanRunOperations(): ProjectAgentOperationRegistryDraft {
       }),
       outputSchema: z.unknown(),
       execute: async (ctx, input) => {
+        await assertUserOwnsPlanRunProject({
+          projectId: input.projectId,
+          userId: ctx.userId,
+        })
+
         const planRun = await createPlanRun({
           userId: ctx.userId,
           projectId: input.projectId,

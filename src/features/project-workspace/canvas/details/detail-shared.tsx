@@ -81,6 +81,8 @@ export function resolveTone(kind: WorkspaceCanvasFlowNode['data']['kind']): Deta
       return 'final'
     case 'storyInput':
     case 'analysis':
+    case 'editTimelineAgent':
+    case 'editTimelineSegment':
       return 'story'
   }
 }

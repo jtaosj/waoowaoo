@@ -95,10 +95,6 @@ async function generateVideoForPanel(
   projectVideoRatio: string | null | undefined,
   generationOptions: VideoOptionMap,
 ): Promise<{ cosKey: string; generationMode: VideoGenerationMode; actualVideoTokens?: number }> {
-  if (!panel.imageUrl) {
-    throw new Error(`Panel ${panel.id} has no imageUrl`)
-  }
-
   const firstLastFramePayload =
     typeof payload.firstLastFrame === 'object' && payload.firstLastFrame !== null
       ? (payload.firstLastFrame as AnyObj)
@@ -111,20 +107,26 @@ async function generateVideoForPanel(
     throw new Error(`Panel ${panel.id} has no video prompt`)
   }
 
-  const sourceImageUrl = toSignedUrlIfCos(panel.imageUrl, 3600)
-  if (!sourceImageUrl) {
-    throw new Error(`Panel ${panel.id} image url invalid`)
-  }
-  const sourceImageBase64 = await normalizeToBase64ForGeneration(sourceImageUrl)
-
   let lastFrameImageBase64: string | undefined
   const generationMode: VideoGenerationMode = firstLastFramePayload ? 'firstlastframe' : 'normal'
   const requestedGenerateAudio = typeof generationOptions.generateAudio === 'boolean'
     ? generationOptions.generateAudio
     : undefined
   let model = modelId
+  let sourceImageBase64: string | undefined
+
+  if (panel.imageUrl) {
+    const sourceImageUrl = toSignedUrlIfCos(panel.imageUrl, 3600)
+    if (!sourceImageUrl) {
+      throw new Error(`Panel ${panel.id} image url invalid`)
+    }
+    sourceImageBase64 = await normalizeToBase64ForGeneration(sourceImageUrl)
+  }
 
   if (firstLastFramePayload) {
+    if (!sourceImageBase64) {
+      throw new Error('VIDEO_FIRSTLASTFRAME_SOURCE_IMAGE_REQUIRED')
+    }
     model =
       typeof firstLastFramePayload.flModel === 'string' && firstLastFramePayload.flModel
         ? firstLastFramePayload.flModel
@@ -133,7 +135,12 @@ async function generateVideoForPanel(
     if (firstLastFrameCapabilities?.video?.firstlastframe !== true) {
       throw new Error(`VIDEO_FIRSTLASTFRAME_MODEL_UNSUPPORTED: ${model}`)
     }
-    if (
+    const directLastFrameImageUrl = typeof firstLastFramePayload.lastFrameImageUrl === 'string'
+      ? firstLastFramePayload.lastFrameImageUrl.trim()
+      : ''
+    if (directLastFrameImageUrl) {
+      lastFrameImageBase64 = await normalizeToBase64ForGeneration(directLastFrameImageUrl)
+    } else if (
       typeof firstLastFramePayload.lastFrameStoryboardId === 'string' &&
       firstLastFramePayload.lastFrameStoryboardId &&
       firstLastFramePayload.lastFramePanelIndex !== undefined
@@ -149,12 +156,15 @@ async function generateVideoForPanel(
         }
       }
     }
+    if (!lastFrameImageBase64) {
+      throw new Error('VIDEO_FIRSTLASTFRAME_LAST_FRAME_IMAGE_REQUIRED')
+    }
   }
 
   const generatedVideo = await resolveVideoSourceFromGeneration(job, {
     userId: job.data.userId,
     modelId: model,
-    imageUrl: sourceImageBase64,
+    ...(sourceImageBase64 ? { imageUrl: sourceImageBase64 } : {}),
     options: {
       prompt,
       ...(projectVideoRatio ? { aspectRatio: projectVideoRatio } : {}),

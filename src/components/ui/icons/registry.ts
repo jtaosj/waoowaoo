@@ -184,6 +184,7 @@ export const iconRegistry = {
   clapperboard: Clapperboard,
   cpu: Cpu,
   film: Film,
+  timeline: Film,
   folderOpen: FolderOpen,
   gripVertical: GripVertical,
 } as const satisfies Record<string, LucideIcon>

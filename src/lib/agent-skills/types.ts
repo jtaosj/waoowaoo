@@ -9,6 +9,7 @@ export type AgentSkillId =
   | 'location-selection'
   | 'character-selection'
   | 'audio-direction'
+  | 'edit-first-video-director'
   | 'media-generation'
 
 export interface AgentSkillManifest {

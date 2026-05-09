@@ -87,6 +87,9 @@ export async function executeFalVideoGeneration(input: AiProviderVideoExecutionC
   if (!endpoint) {
     throw new Error(`FAL_VIDEO_MODEL_UNSUPPORTED: ${modelId}`)
   }
+  if (!input.imageUrl.trim()) {
+    throw new Error('FAL_VIDEO_IMAGE_URL_REQUIRED')
+  }
 
   const logger = createScopedLogger({ module: 'worker.fal-video', action: 'fal_video_generate' })
   logger.info({ message: 'FAL video generation request', details: { modelId, endpoint } })

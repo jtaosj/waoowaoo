@@ -3,6 +3,7 @@ import { getProviderConfig } from '@/lib/user-api/runtime-config'
 import { normalizeToBase64ForGeneration } from '@/lib/media/outbound-image'
 import { requireSelectedModelId } from '@/lib/ai-providers/shared/model-selection'
 import type { AiProviderVideoExecutionContext, GenerateResult } from '@/lib/ai-providers/runtime-types'
+import { setProxy } from '../../../../lib/prompts/proxy'
 
 type GoogleVeoOptions = NonNullable<AiProviderVideoExecutionContext['options']>
 
@@ -69,6 +70,7 @@ export async function executeGoogleVideoGeneration(input: AiProviderVideoExecuti
   assertAllowedGoogleVideoOptions(options)
 
   const { apiKey } = await getProviderConfig(input.userId, input.selection.provider)
+  await setProxy()
   const ai = new GoogleGenAI({ apiKey })
 
   const modelId = requireSelectedModelId(input.selection, 'google:video')

@@ -1,7 +1,10 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { PlanRunSubmittedDataCard } from '@/features/project-workspace/components/workspace-assistant/PlanRunSubmittedDataCard'
+import {
+  PlanRunSubmittedDataCard,
+  readVisibleEditTimelineEvidenceFromSnapshot,
+} from '@/features/project-workspace/components/workspace-assistant/PlanRunSubmittedDataCard'
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'zh',
@@ -19,7 +22,7 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 describe('workspace assistant plan run submitted card', () => {
-  it('renders the submitted PlanRun id and waiting task id immediately', () => {
+  it('renders a readable live run status instead of exposing only raw ids', () => {
     const props = {
       data: {
         operationId: 'execute_plan',
@@ -32,9 +35,42 @@ describe('workspace assistant plan run submitted card', () => {
 
     const html = renderToStaticMarkup(<PlanRunSubmittedDataCard {...props} />)
 
-    expect(html).toContain('cards.planRunSubmitted · waiting_task')
-    expect(html).toContain('cards.planRunIdLabel: plan-run-1')
-    expect(html).toContain('cards.waitingTaskIdLabel: task-1')
+    expect(html).toContain('cards.planRunTitle.running')
+    expect(html).toContain('cards.planRunStage.waitingTask')
+    expect(html).toContain('cards.planRunNext.waitingForTask')
+    expect(html).toContain('cards.planRunMeta.planRun: plan-run-1')
+    expect(html).toContain('cards.planRunMeta.task: task-1')
     expect(html).toContain('data-icon="loader"')
+  })
+
+  it('reads a playable final video URL from final.video artifacts', () => {
+    const finalVideoUrl = '/api/files/final-videos/editor-final-video.mp4?X-Amz-Signature=signature'
+    const evidence = readVisibleEditTimelineEvidenceFromSnapshot({
+      planRun: {
+        id: 'plan-run-final-video',
+        projectId: 'project-1',
+        status: 'completed',
+      },
+      steps: [],
+      artifacts: [
+        {
+          id: 'artifact-final-video',
+          artifactType: 'final.video',
+          refId: 'final-videos/editor-final-video.mp4',
+          payload: {
+            finalVideoUrl,
+            outputUrl: finalVideoUrl,
+            storageKey: 'final-videos/editor-final-video.mp4',
+            renderStatus: 'completed',
+          },
+        },
+      ],
+    })
+
+    expect(evidence?.finalVideoUrl).toBe(finalVideoUrl)
+    expect(evidence?.finalVideoRefs).toEqual([
+      finalVideoUrl,
+      'final-videos/editor-final-video.mp4',
+    ])
   })
 })

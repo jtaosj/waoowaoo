@@ -19,6 +19,10 @@ export function clampWorkspaceAssistantPanelWidth(widthPx: number): number {
   )
 }
 
+export function buildWorkspaceAssistantPanelInlineSize(panelWidthPx: number): string {
+  return `min(${Math.round(panelWidthPx)}px, calc(100vw - 2rem))`
+}
+
 export function buildWorkspaceAssistantPanelLayout(
   isCollapsed: boolean,
   expandedWidthPx: number = WORKSPACE_ASSISTANT_PANEL_WIDTH_PX,

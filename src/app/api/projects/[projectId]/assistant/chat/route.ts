@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { safeValidateUIMessages } from 'ai'
+import { safeValidateUIMessages, type UIMessage } from 'ai'
 import { apiHandler, ApiError } from '@/lib/api-errors'
 import { isErrorResponse, requireProjectAuth } from '@/lib/api-auth'
 import { getUserModelConfig } from '@/lib/config-service'
@@ -7,6 +7,7 @@ import { createProjectAgentChatResponse } from '@/lib/project-agent'
 import { normalizeProjectAgentLocale } from '@/lib/project-agent/locale'
 import { compressMessages, shouldCompressMessages } from '@/lib/project-agent/message-compression'
 import { resolveProjectAgentLanguageModel } from '@/lib/project-agent/model'
+import { mergeProjectAssistantThreadMessages } from '@/lib/project-agent/thread-message-merge'
 import {
   clearProjectAssistantThread,
   loadProjectAssistantThread,
@@ -56,9 +57,16 @@ function readEpisodeIdFromQuery(request: NextRequest): string | null {
 }
 
 function readEpisodeIdFromBody(body: RequestBody): string | null {
-  return typeof body.episodeId === 'string' && body.episodeId.trim()
-    ? body.episodeId.trim()
-    : null
+  if (typeof body.episodeId === 'string' && body.episodeId.trim()) {
+    return body.episodeId.trim()
+  }
+  if (body.context && typeof body.context === 'object' && !Array.isArray(body.context)) {
+    const contextEpisodeId = (body.context as Record<string, unknown>).episodeId
+    if (typeof contextEpisodeId === 'string' && contextEpisodeId.trim()) {
+      return contextEpisodeId.trim()
+    }
+  }
+  return null
 }
 
 function readLocaleFromBody(body: RequestBody): 'zh' | 'en' {
@@ -68,17 +76,21 @@ function readLocaleFromBody(body: RequestBody): 'zh' | 'en' {
   return normalizeProjectAgentLocale(body.locale)
 }
 
-async function compressThreadMessagesIfNeeded(params: {
-  userId: string
-  locale: 'zh' | 'en'
-  messages: unknown
-}) {
-  const validation = await safeValidateUIMessages({ messages: params.messages })
+async function validateThreadMessages(messages: unknown): Promise<UIMessage[]> {
+  const validation = await safeValidateUIMessages({ messages })
   if (!validation.success) {
     throw new Error('PROJECT_AGENT_INVALID_MESSAGES')
   }
-  if (!shouldCompressMessages(validation.data)) {
-    return validation.data
+  return validation.data
+}
+
+async function compressValidatedThreadMessagesIfNeeded(params: {
+  userId: string
+  locale: 'zh' | 'en'
+  messages: UIMessage[]
+}) {
+  if (!shouldCompressMessages(params.messages)) {
+    return params.messages
   }
 
   const userConfig = await getUserModelConfig(params.userId)
@@ -93,9 +105,22 @@ async function compressThreadMessagesIfNeeded(params: {
   })
 
   return await compressMessages({
-    messages: validation.data,
+    messages: params.messages,
     locale: params.locale,
     model: resolved.languageModel,
+  })
+}
+
+async function compressThreadMessagesIfNeeded(params: {
+  userId: string
+  locale: 'zh' | 'en'
+  messages: unknown
+}) {
+  const messages = await validateThreadMessages(params.messages)
+  return await compressValidatedThreadMessagesIfNeeded({
+    userId: params.userId,
+    locale: params.locale,
+    messages,
   })
 }
 
@@ -204,11 +229,31 @@ export const POST = apiHandler(async (
 
   try {
     const locale = readLocaleFromBody(body)
-    const messages = await compressThreadMessagesIfNeeded({
+    const incomingMessages = await validateThreadMessages(body.messages)
+    const episodeId = readEpisodeIdFromBody(body)
+    const persistedThread = await loadProjectAssistantThread({
+      projectId,
+      userId: authResult.session.user.id,
+      episodeId,
+      assistantId: 'workspace-command',
+    })
+    const mergedMessages = mergeProjectAssistantThreadMessages({
+      persistedMessages: persistedThread?.messages ?? [],
+      incomingMessages,
+    })
+    const messages = await compressValidatedThreadMessagesIfNeeded({
       userId: authResult.session.user.id,
       locale,
-      messages: body.messages,
+      messages: mergedMessages,
     })
+    const thread = await saveProjectAssistantThread({
+      projectId,
+      userId: authResult.session.user.id,
+      episodeId,
+      assistantId: 'workspace-command',
+      messages,
+    })
+    await writeWorkspaceAssistantThreadLog(thread)
     return await createProjectAgentChatResponse({
       request,
       userId: authResult.session.user.id,

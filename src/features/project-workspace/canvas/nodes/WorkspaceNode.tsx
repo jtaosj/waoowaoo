@@ -5,9 +5,11 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useTranslations } from 'next-intl'
 import { AppIcon, type AppIconName } from '@/components/ui/icons'
 import StoryDetail from '../details/StoryDetail'
+import { normalizePlayableFinalVideoUrl } from '../final-video'
 import type {
   WorkspaceCanvasAssetRef,
   WorkspaceCanvasFlowNode,
+  WorkspaceCanvasFinalDetails,
   WorkspaceCanvasScriptScene,
   WorkspaceCanvasTextLine,
 } from '../node-canvas-types'
@@ -28,7 +30,19 @@ function nodeIconName(kind: WorkspaceCanvasFlowNode['data']['kind']): AppIconNam
       return 'video'
     case 'finalTimeline':
       return 'film'
+    case 'editTimelineAgent':
+      return 'brain'
+    case 'editTimelineSegment':
+      return 'clock'
   }
+}
+
+function canOpenDetail(kind: WorkspaceCanvasFlowNode['data']['kind']): boolean {
+  return kind === 'scriptClip'
+    || kind === 'shot'
+    || kind === 'imageAsset'
+    || kind === 'videoClip'
+    || kind === 'finalTimeline'
 }
 
 function hasText(value: string | null | undefined): value is string {
@@ -69,6 +83,48 @@ function renderChips(label: string, values: readonly string[]) {
         </span>
       ))}
     </div>
+  ))
+}
+
+function finalVideoUnavailableLabel(
+  status: string | null | undefined,
+  labels: ReturnType<typeof useTranslations>,
+): string {
+  if (status === 'pending' || status === 'rendering') return labels('finalVideoPending')
+  if (status === 'failed') return labels('finalVideoFailed')
+  return labels('finalVideoUnavailable')
+}
+
+function renderFinalVideoPreview(
+  finalVideo: WorkspaceCanvasFinalDetails['finalVideo'],
+  labels: ReturnType<typeof useTranslations>,
+) {
+  const videoUrl = normalizePlayableFinalVideoUrl(finalVideo?.url)
+  return renderSection(labels('finalVideo'), (
+    videoUrl ? (
+      <div className="space-y-2">
+        <video
+          className="aspect-[9/16] max-h-44 w-full rounded-[12px] bg-black object-contain"
+          src={videoUrl}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={labels('finalVideoPlayer')}
+        />
+        <a
+          className="block truncate text-[11px] font-semibold text-[var(--glass-tone-info-fg)] underline-offset-2 hover:underline"
+          href={videoUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {labels('openFinalVideo')}
+        </a>
+      </div>
+    ) : (
+      <p className="text-xs leading-5 text-[var(--glass-text-tertiary)]">
+        {finalVideoUnavailableLabel(finalVideo?.status, labels)}
+      </p>
+    )
   ))
 }
 
@@ -306,6 +362,7 @@ function FinalContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode
   if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
   return (
     <div className="space-y-2">
+      {renderFinalVideoPreview(details.finalVideo, labels)}
       {renderSection(labels('finalStats'), (
         <div className="space-y-1">
           {renderValue(labels('totalShots'), details.totalShots)}
@@ -315,6 +372,62 @@ function FinalContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode
         </div>
       ))}
       {renderChips(labels('videoOrder'), details.orderedVideoLabels)}
+    </div>
+  )
+}
+
+function EditTimelineAgentContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode['data']; readonly labels: ReturnType<typeof useTranslations> }) {
+  const details = data.editTimelineAgentDetails
+  if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
+  return (
+    <div className="space-y-2">
+      {hasText(details.decision) ? renderSection(labels('timelineDecision'), renderTextBlock(details.decision)) : null}
+      {renderSection(labels('mission'), renderTextBlock(details.mission))}
+      {renderSection(labels('agentSummary'), renderTextBlock(details.summary))}
+      {renderChips(labels('assignedShots'), details.shotIds)}
+      {details.outputs.length > 0 ? renderSection(labels('agentOutputs'), (
+        <div className="space-y-1.5">
+          {details.outputs.map((output) => (
+            <div key={`${details.role}:${output.shotId}:${output.text}`} className="rounded-[12px] bg-white px-2.5 py-2 text-xs leading-5 ring-1 ring-slate-100">
+              <p className="mb-0.5 text-[10px] font-semibold uppercase text-[var(--glass-text-tertiary)]">{output.shotId}</p>
+              <p className="whitespace-pre-wrap break-words text-[var(--glass-text-secondary)]">{output.text}</p>
+            </div>
+          ))}
+        </div>
+      )) : null}
+    </div>
+  )
+}
+
+function EditTimelineSegmentContent({ data, labels }: { readonly data: WorkspaceCanvasFlowNode['data']; readonly labels: ReturnType<typeof useTranslations> }) {
+  const details = data.editTimelineSegmentDetails
+  if (!details) return <p className="text-sm leading-6 text-[var(--glass-text-secondary)]">{data.body}</p>
+  return (
+    <div className="space-y-2">
+      {renderSection(labels('timelineIntent'), (
+        <div className="space-y-1">
+          {renderValue(labels('timeRange'), `${details.startLabel} - ${details.endLabel}`)}
+          {renderValue(labels('duration'), details.durationLabel)}
+          {renderTextBlock(details.intent)}
+        </div>
+      ))}
+      {details.shots.length > 0 ? renderSection(labels('timelineShots'), (
+        <div className="space-y-2">
+          {details.shots.map((shot) => (
+            <div key={shot.id} className="space-y-1.5 rounded-[12px] bg-white px-2.5 py-2 ring-1 ring-slate-100">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 truncate text-xs font-semibold text-[var(--glass-text-primary)]">{shot.title}</p>
+                <span className="shrink-0 text-[10px] font-semibold uppercase text-[var(--glass-text-tertiary)]">{shot.timeLabel}</span>
+              </div>
+              {renderValue(labels('shotGoal'), shot.goal)}
+              {renderValue(labels('visual'), shot.visual)}
+              {renderValue(labels('timelineStory'), shot.story)}
+              {renderValue(labels('sound'), shot.sound)}
+              {renderValue(labels('caption'), shot.caption)}
+            </div>
+          ))}
+        </div>
+      )) : null}
     </div>
   )
 }
@@ -345,6 +458,10 @@ function NodeContent({
       return <VideoContent data={data} labels={labels} />
     case 'finalTimeline':
       return <FinalContent data={data} labels={labels} />
+    case 'editTimelineAgent':
+      return <EditTimelineAgentContent data={data} labels={labels} />
+    case 'editTimelineSegment':
+      return <EditTimelineSegmentContent data={data} labels={labels} />
   }
 }
 
@@ -354,7 +471,7 @@ export default function WorkspaceNode({ data }: NodeProps<WorkspaceCanvasFlowNod
   const hasTarget = data.kind !== 'storyInput'
   const hasSource = data.kind !== 'finalTimeline'
   const action = data.action
-  const detailNodeId = data.kind === 'storyInput' ? null : data.nodeId
+  const detailNodeId = canOpenDetail(data.kind) ? data.nodeId : null
 
   useEffect(() => {
     setStoryDraft(data.body)

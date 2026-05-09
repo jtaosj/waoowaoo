@@ -2,6 +2,12 @@ import type { NextRequest } from 'next/server'
 import { ApiError } from '@/lib/api-errors'
 import { getAgentSkillManifest } from '@/lib/agent-skills/registry'
 import { executeProjectAgentOperationFromApi } from '@/lib/adapters/api/execute-project-agent-operation'
+import {
+  persistEditTimelineFinalVideoBlocker,
+  persistEditTimelineFinalVideoEvidence,
+  persistEditTimelineProviderEvidence,
+  providerRuntimeStatusFromTaskStatus,
+} from '@/lib/edit-timeline/runtime-artifact-writer'
 import { getTaskById } from '@/lib/task/service'
 import { TASK_STATUS } from '@/lib/task/types'
 import {
@@ -19,6 +25,7 @@ import {
   buildOperationInput,
   extractTaskId,
   findRunnableExecutableStep,
+  inputBuildErrorMessage,
   sanitizeOutput,
   type ExecutablePlanStep,
   type JsonRecord,
@@ -146,6 +153,7 @@ async function createOutputArtifacts(params: {
       refId: artifactRefId({
         stepKey: params.step.stepKey,
         taskId: params.taskId,
+        artifactType,
         output: params.output,
       }),
       payload: params.output,
@@ -188,13 +196,27 @@ export async function resumePlanRunFromApi(params: {
   if (waitingStep?.taskId) {
     const task = assertTaskBelongsToPlan(await getTaskById(waitingStep.taskId), snapshot)
     if (ACTIVE_TASK_STATUSES.has(task.status)) {
+      const providerStatus = waitingStep.operationId === 'generate_panel_video'
+        ? providerRuntimeStatusFromTaskStatus(task.status)
+        : null
+      let activeSnapshot = snapshot
+      if (providerStatus) {
+        const persisted = await persistEditTimelineProviderEvidence({
+          planRunId: params.planRunId,
+          snapshot,
+          step: waitingStep,
+          task,
+          status: providerStatus,
+        })
+        activeSnapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      }
       return {
         success: true,
         planRunId: params.planRunId,
         status: PLAN_STEP_STATUS.WAITING_TASK,
         resumedStepKeys,
         waitingTaskId: waitingStep.taskId,
-        snapshot,
+        snapshot: activeSnapshot,
       }
     }
     if (task.status !== TASK_STATUS.COMPLETED) {
@@ -207,7 +229,18 @@ export async function resumePlanRunFromApi(params: {
         errorCode: failure.errorCode,
         errorMessage: failure.errorMessage,
       })
-      const failedSnapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      let failedSnapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      if (waitingStep.operationId === 'generate_panel_video') {
+        const persisted = await persistEditTimelineProviderEvidence({
+          planRunId: params.planRunId,
+          snapshot: failedSnapshot,
+          step: waitingStep,
+          task,
+          status: 'failed',
+          blocker: failure.errorMessage,
+        })
+        failedSnapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      }
       return {
         success: false,
         planRunId: params.planRunId,
@@ -235,7 +268,15 @@ export async function resumePlanRunFromApi(params: {
       taskId: waitingStep.taskId,
       output,
     })
-    snapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+    const persisted = await persistEditTimelineProviderEvidence({
+      planRunId: params.planRunId,
+      snapshot,
+      step: waitingStep,
+      task,
+      output,
+      status: 'succeeded',
+    })
+    snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
   }
 
   while (!TERMINAL_PLAN_RUN_STATUSES.has(snapshot.planRun.status)) {
@@ -272,10 +313,55 @@ export async function resumePlanRunFromApi(params: {
     })
     resumedStepKeys.push(step.stepKey)
 
-    const operationInput = buildOperationInput({
-      step,
-      episodeId: snapshot.planRun.episodeId,
-    })
+    let operationInput: JsonRecord
+    try {
+      operationInput = buildOperationInput({
+        step,
+        episodeId: snapshot.planRun.episodeId,
+      })
+    } catch (error) {
+      const message = inputBuildErrorMessage(error)
+      await failPlanStep({
+        planRunId: params.planRunId,
+        userId: params.userId,
+        projectId: snapshot.planRun.projectId,
+        stepKey: step.stepKey,
+        errorCode: 'PLAN_STEP_INPUT_BUILD_FAILED',
+        errorMessage: message,
+      })
+      if (step.operationId === 'generate_panel_video') {
+        const persisted = await persistEditTimelineProviderEvidence({
+          planRunId: params.planRunId,
+          snapshot,
+          step,
+          status: 'blocked',
+          blocker: message,
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else if (step.operationId === 'assemble_timeline_video') {
+        const persisted = await persistEditTimelineFinalVideoBlocker({
+          planRunId: params.planRunId,
+          snapshot,
+          blocker: message,
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else {
+        snapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      }
+      return {
+        success: false,
+        planRunId: params.planRunId,
+        status: PLAN_RUN_STATUS.FAILED,
+        failedStepKey: step.stepKey,
+        error: {
+          code: 'PLAN_STEP_INPUT_BUILD_FAILED',
+          message,
+        },
+        resumedStepKeys,
+        waitingTaskId: null,
+        snapshot,
+      }
+    }
 
     try {
       const result = await executeProjectAgentOperationFromApi({
@@ -306,7 +392,26 @@ export async function resumePlanRunFromApi(params: {
         taskId,
         output,
       })
-      snapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      if (taskId) {
+        const persisted = await persistEditTimelineProviderEvidence({
+          planRunId: params.planRunId,
+          snapshot,
+          step,
+          output,
+          status: 'submitted',
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else if (step.operationId === 'assemble_timeline_video') {
+        const persisted = await persistEditTimelineFinalVideoEvidence({
+          planRunId: params.planRunId,
+          snapshot,
+          step,
+          output,
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else {
+        snapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      }
 
       if (taskId) {
         return {
@@ -331,7 +436,25 @@ export async function resumePlanRunFromApi(params: {
         errorCode: failure.code,
         errorMessage: failure.message,
       })
-      const failedSnapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      if (step.operationId === 'generate_panel_video') {
+        const persisted = await persistEditTimelineProviderEvidence({
+          planRunId: params.planRunId,
+          snapshot,
+          step,
+          status: 'failed',
+          blocker: failure.message,
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else if (step.operationId === 'assemble_timeline_video') {
+        const persisted = await persistEditTimelineFinalVideoBlocker({
+          planRunId: params.planRunId,
+          snapshot,
+          blocker: failure.message,
+        })
+        snapshot = ensureOwnedSnapshot(persisted.snapshot, params.userId)
+      } else {
+        snapshot = ensureOwnedSnapshot(await getPlanRunSnapshot(params.planRunId), params.userId)
+      }
       return {
         success: false,
         planRunId: params.planRunId,
@@ -340,7 +463,7 @@ export async function resumePlanRunFromApi(params: {
         error: failure,
         resumedStepKeys,
         waitingTaskId: null,
-        snapshot: failedSnapshot,
+        snapshot,
       }
     }
   }

@@ -218,6 +218,11 @@ describe('workspace node rendering', () => {
         totalVideos: 1,
         totalDuration: 2,
         orderedVideoLabels: ['panel-1'],
+        finalVideo: {
+          editorProjectId: 'editor-final',
+          url: '/api/final-video/editor-final.mp4',
+          status: 'completed',
+        },
       },
     })
 
@@ -228,6 +233,108 @@ describe('workspace node rendering', () => {
     expect(videoHtml).toContain('first last prompt')
     expect(videoHtml).not.toContain('lip.mp4')
     expect(finalHtml).toContain('panel-1')
+    expect(finalHtml).toContain('<video')
+    expect(finalHtml).toContain('src="/api/final-video/editor-final.mp4"')
+    expect(finalHtml).toContain('controls=""')
+    expect(finalHtml).toContain('finalVideoPlayer')
     expect(`${shotHtml}${imageHtml}${videoHtml}${finalHtml}`).not.toContain('StoryboardStage')
+  })
+
+  it('shows an explicit final video pending state instead of a fake player', () => {
+    const html = renderNode({
+      kind: 'finalTimeline',
+      layoutNodeType: 'finalTimeline',
+      targetType: 'episode',
+      targetId: 'episode-1',
+      title: 'Final node',
+      eyebrow: 'Final',
+      body: 'final body',
+      meta: 'order',
+      statusLabel: 'Ready',
+      width: 340,
+      height: 300,
+      finalDetails: {
+        totalShots: 1,
+        totalImages: 1,
+        totalVideos: 1,
+        totalDuration: 2,
+        orderedVideoLabels: ['panel-1'],
+        finalVideo: {
+          editorProjectId: 'editor-final',
+          url: 'final-videos/editor-final.mp4',
+          status: 'rendering',
+        },
+      },
+    })
+
+    expect(html).not.toContain('<video')
+    expect(html).toContain('finalVideoPending')
+  })
+
+  it('renders edit-first agent and time segment cards as normal workspace nodes', () => {
+    const agentHtml = renderNode({
+      kind: 'editTimelineAgent',
+      layoutNodeType: 'editTimelineAgent',
+      targetType: 'episode',
+      targetId: 'episode-1',
+      title: '画面 Agent',
+      eyebrow: 'AI Agent',
+      body: '画面 Agent 负责办公室和雨夜氛围。',
+      meta: '覆盖 1 个镜头',
+      statusLabel: '已起草',
+      width: 360,
+      height: 300,
+      nodeId: 'edit-agent:visual-director',
+      editTimelineAgentDetails: {
+        role: 'visual-director',
+        phase: 'specialist',
+        mission: '负责画面描述。',
+        summary: '画面 Agent 负责办公室和雨夜氛围。',
+        decision: '专业 Agent 按主 Agent 的时间段任务输出画面方案。',
+        shotIds: ['shot-pressure'],
+        outputs: [{ shotId: 'shot-pressure', text: '深夜办公室，窗外下雨。' }],
+      },
+    })
+    const segmentHtml = renderNode({
+      kind: 'editTimelineSegment',
+      layoutNodeType: 'editTimelineSegment',
+      targetType: 'episode',
+      targetId: 'episode-1',
+      title: '压抑开场',
+      eyebrow: '0s - 3s',
+      body: '表现压抑、疲惫、被工作困住。',
+      meta: '1 个镜头',
+      statusLabel: '已规划',
+      width: 420,
+      height: 340,
+      nodeId: 'edit-segment:seg-pressure',
+      editTimelineSegmentDetails: {
+        startLabel: '0s',
+        endLabel: '3s',
+        durationLabel: '3s',
+        intent: '表现压抑、疲惫、被工作困住。',
+        shots: [{
+          id: 'shot-pressure',
+          title: '深夜办公室',
+          timeLabel: '0s - 3s',
+          goal: '表现压抑、疲惫、被工作困住。',
+          visual: '深夜办公室，女生坐在电脑前，窗外下雨。',
+          story: '表现压抑、疲惫、被工作困住。',
+          sound: '低频环境音、雨声、键盘声。',
+          caption: '我好像快忘了，自己为什么想创作。',
+        }],
+      },
+    })
+
+    expect(agentHtml).toContain('画面 Agent')
+    expect(agentHtml).toContain('专业 Agent 按主 Agent 的时间段任务输出画面方案。')
+    expect(agentHtml).toContain('负责画面描述。')
+    expect(agentHtml).toContain('深夜办公室，窗外下雨。')
+    expect(agentHtml).not.toContain('nodeFields.openDetails')
+    expect(segmentHtml).toContain('压抑开场')
+    expect(segmentHtml).toContain('visual')
+    expect(segmentHtml).toContain('深夜办公室，女生坐在电脑前，窗外下雨。')
+    expect(segmentHtml).toContain('我好像快忘了，自己为什么想创作。')
+    expect(segmentHtml).not.toContain('nodeFields.openDetails')
   })
 })

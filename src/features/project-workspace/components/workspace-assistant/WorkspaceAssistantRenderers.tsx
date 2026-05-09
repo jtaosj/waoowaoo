@@ -21,6 +21,7 @@ import type {
   TaskSubmittedPartData,
 } from '@/lib/project-agent/types'
 import { useRevertMutationBatch } from '@/lib/query/hooks'
+import { EditTimelineDataCard } from './EditTimelineDataCard'
 import { MarkdownTextPart } from './MarkdownTextPart'
 import { PlanRunSubmittedDataCard } from './PlanRunSubmittedDataCard'
 import {
@@ -38,6 +39,7 @@ const AGENT_SKILL_LABEL_KEYS: Record<string, string> = {
   'character-selection': 'characterSelection',
   'audio-direction': 'audioDirection',
   'media-generation': 'mediaGeneration',
+  'edit-first-video-director': 'editFirstVideoDirector',
 }
 
 function formatSkillLabel(skillId: string | null | undefined, t: ReturnType<typeof useTranslations<'assistantAgent'>>): string {
@@ -430,6 +432,7 @@ export function useWorkspaceAssistantMessagePartComponents({
         'task-submitted': TaskSubmittedDataCard,
         'task-batch-submitted': TaskBatchSubmittedDataCard,
         'plan-run-submitted': PlanRunSubmittedDataCard,
+        'edit-timeline': EditTimelineDataCard,
         plan: AgentPlanDataCard,
         'project-context': ProjectContextDataCard,
       },

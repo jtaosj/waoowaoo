@@ -44,6 +44,55 @@ export function mergeWorkspaceAssistantRawMessages(params: {
   return Array.from(merged.values())
 }
 
+export function buildWorkspaceAssistantRequestMessages(params: {
+  rawContextMessages: UIMessage[]
+  outgoingMessages: UIMessage[]
+}): UIMessage[] {
+  return mergeWorkspaceAssistantRawMessages({
+    current: params.rawContextMessages,
+    incoming: params.outgoingMessages,
+  })
+}
+
+export interface WorkspaceAssistantSendRequestBodyParams {
+  baseBody?: unknown
+  context: Record<string, unknown>
+  id?: unknown
+  rawContextMessages: UIMessage[]
+  outgoingMessages: UIMessage[]
+  trigger?: unknown
+  messageId?: unknown
+  metadata?: unknown
+}
+
+function normalizeBaseBody(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
+}
+
+function readContextEpisodeId(context: Record<string, unknown>): string | null {
+  const value = context.episodeId
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+export function buildWorkspaceAssistantSendRequestBody(
+  params: WorkspaceAssistantSendRequestBodyParams,
+): Record<string, unknown> {
+  const episodeId = readContextEpisodeId(params.context)
+  return {
+    ...normalizeBaseBody(params.baseBody),
+    context: params.context,
+    ...(episodeId ? { episodeId } : {}),
+    id: params.id,
+    messages: buildWorkspaceAssistantRequestMessages({
+      rawContextMessages: params.rawContextMessages,
+      outgoingMessages: params.outgoingMessages,
+    }),
+    trigger: params.trigger,
+    messageId: params.messageId,
+    metadata: params.metadata,
+  }
+}
+
 export function serializeWorkspaceAssistantRawContext(messages: UIMessage[]): string {
   return JSON.stringify(messages, null, 2)
 }
